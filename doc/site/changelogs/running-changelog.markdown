@@ -21,6 +21,7 @@ Nothing changes in behaviour, but they are (and have been for a long time) a bad
 Use shaders as a replacement.
 
 # Features
+* it is now possible to set the duration of the minimap ping using the `MiniMapNoteDuration` setting.
 
 ### Camera callins
 * added `wupget:CameraRotationChanged(rotX, rotY, rotZ) → nil`.

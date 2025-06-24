@@ -1203,6 +1203,14 @@
     "defaultValue": 0,
     "type": "bool"
   },
+  "MiniMapNoteDuration": {
+    "declarationFile": "/spring/rts/Game/UI/MiniMap.cpp",
+    "declarationLine": 83,
+    "description": "Duration in seconds of a note (ping) on the MiniMap.",
+    "defaultValue": 2,
+    "minimumValue": 2,
+    "type": "float"
+  },
   "MiniMapCursorScale": {
     "declarationFile": "/spring/rts/Game/UI/MiniMap.cpp",
     "declarationLine": 60,

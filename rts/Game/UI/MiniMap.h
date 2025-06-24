@@ -214,6 +214,8 @@ protected:
 	Shader::IProgramObject* bgShader = nullptr;
 
 	CUnit* lastClicked = nullptr;
+
+	float minimapNoteDuration = 2.0f;
 };
 
 

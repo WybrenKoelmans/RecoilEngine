@@ -80,6 +80,8 @@ CONFIG(bool, DualScreenMiniMapAspectRatio).defaultValue(true).description("Wheth
 
 CONFIG(int, MiniMapCanFlip).defaultValue(0).minimumValue(0).maximumValue(1).description("Whether minimap inverts coordinates when camera Y rotation is between 90 and 270 degrees natively (1) or hands Lua control (0).");
 
+CONFIG(float, MiniMapNoteDuration).defaultValue(2.0f).minimumValue(2.0f).description("Duration in seconds that minimap notes (pings) are visible.");
+
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
@@ -107,7 +109,7 @@ CMiniMap::CMiniMap()
 
 	ConfigUpdate();
 
-	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize"});
+	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize", "MiniMapNoteDuration"});
 
 	UpdateGeometry();
 
@@ -196,6 +198,8 @@ void CMiniMap::ConfigUpdate()
 	useIcons = configHandler->GetBool("MiniMapIcons");
 
 	minimapCanFlip = configHandler->GetInt("MiniMapCanFlip");
+
+	minimapNoteDuration = configHandler->GetFloat("MiniMapNoteDuration");
 }
 
 void CMiniMap::ConfigNotify(const std::string& key, const std::string& value)
@@ -1679,7 +1683,7 @@ void CMiniMap::DrawNotes()
 		return;
 	}
 
-	const float baseSize = mapDims.mapx * SQUARE_SIZE;
+	const float baseSize = mapDims.mapx * SQUARE_SIZE * 0.5f;
 	static auto& rb = RenderBuffer::GetTypedRenderBuffer<VA_TYPE_C>();
 	rb.AssertSubmission();
 	auto& shader = rb.GetShader();
@@ -1687,7 +1691,7 @@ void CMiniMap::DrawNotes()
 	std::deque<Notification>::iterator ni = notes.begin();
 	while (ni != notes.end()) {
 		const float age = gu->gameTime - ni->creationTime;
-		if (age > 2) {
+		if (age > minimapNoteDuration) {
 			ni = notes.erase(ni);
 			continue;
 		}
@@ -1696,14 +1700,34 @@ void CMiniMap::DrawNotes()
 		for (int a = 0; a < 3; ++a) {
 			const float modage = age + a * 0.1f;
 			const float rot = modage * 3;
-			float size = baseSize - modage * baseSize * 0.9f;
-			if (size < 0){
-				if (size < -baseSize * 0.4f) {
-					continue;
-				} else if (size > -baseSize * 0.2f) {
-					size = modage * baseSize * 0.9f - baseSize;
-				} else {
-					size = baseSize * 1.4f - modage * baseSize * 0.9f;
+			float size;
+			
+			// First 2 seconds: original shrinking and first bounce
+			if (modage <= 2.0f) {
+				size = baseSize - modage * baseSize * 0.9f;
+				if (size < 0){
+					if (size < -baseSize * 0.4f) {
+						continue;
+					} else if (size > -baseSize * 0.2f) {
+						size = modage * baseSize * 0.9f - baseSize;
+					} else {
+						size = baseSize * 1.4f - modage * baseSize * 0.9f;
+					}
+				}
+			} else {
+				// After 2 seconds: repeat the bouncing cycle every 1 second
+				const float cycleTime = fmod(modage - 2.0f, 1.0f);
+				const float cycleAge = cycleTime + 1.0f; // Map to the bounce part (1.0-2.0 range)
+				
+				size = baseSize - cycleAge * baseSize * 0.9f;
+				if (size < 0){
+					if (size < -baseSize * 0.4f) {
+						continue;
+					} else if (size > -baseSize * 0.2f) {
+						size = cycleAge * baseSize * 0.9f - baseSize;
+					} else {
+						size = baseSize * 1.4f - cycleAge * baseSize * 0.9f;
+					}
 				}
 			}
 			color.a = (255 * ni->color[3]) / (3 - a);
