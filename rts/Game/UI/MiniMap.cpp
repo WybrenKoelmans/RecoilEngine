@@ -71,6 +71,7 @@ CONFIG(bool, MiniMapIcons).defaultValue(true).headlessValue(false);
 CONFIG(int, MiniMapDrawCommands).defaultValue(1).headlessValue(0).minimumValue(0);
 
 CONFIG(bool, MiniMapDrawProjectiles).defaultValue(true).headlessValue(false);
+CONFIG(bool, MiniMapDrawNotes).defaultValue(true).headlessValue(false);
 CONFIG(bool, SimpleMiniMapColors).defaultValue(false);
 
 CONFIG(bool, MiniMapRenderToTexture).defaultValue(true).safemodeValue(false).description("Asynchronous render MiniMap to a texture independent of screen FPS.");
@@ -107,7 +108,7 @@ CMiniMap::CMiniMap()
 
 	ConfigUpdate();
 
-	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize"});
+	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapDrawNotes", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize"});
 
 	UpdateGeometry();
 
@@ -191,6 +192,7 @@ void CMiniMap::ConfigUpdate()
 	aspectRatio = configHandler->GetBool("DualScreenMiniMapAspectRatio");
 	buttonSize = configHandler->GetInt("MiniMapButtonSize");
 	drawProjectiles = configHandler->GetBool("MiniMapDrawProjectiles");
+	drawNotes = configHandler->GetBool("MiniMapDrawNotes");
 	drawCommands = configHandler->GetInt("MiniMapDrawCommands");
 	cursorScale = configHandler->GetFloat("MiniMapCursorScale");
 	useIcons = configHandler->GetBool("MiniMapIcons");
@@ -397,6 +399,9 @@ void CMiniMap::ConfigCommand(const std::string& line)
 		} break;
 		case hashString("drawprojectiles"): {
 			drawProjectiles = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawProjectiles;
+		} break;
+		case hashString("drawnotes"): {
+			drawNotes = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawNotes;
 		} break;
 		case hashString("simplecolors"): {
 			simpleColors = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !simpleColors;
@@ -1504,7 +1509,9 @@ void CMiniMap::DrawCameraFrustumAndMouseSelection()
 		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
 
-	DrawNotes();
+	if (drawNotes) {
+		DrawNotes();
+	}
 
 	glPopMatrix();
 
@@ -1675,7 +1682,7 @@ void CMiniMap::DrawButtons()
 void CMiniMap::DrawNotes()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	if (notes.empty()) {
+	if (notes.empty() || !drawNotes) {
 		return;
 	}
 
