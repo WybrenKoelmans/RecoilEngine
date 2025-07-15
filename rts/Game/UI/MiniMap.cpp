@@ -71,7 +71,7 @@ CONFIG(bool, MiniMapIcons).defaultValue(true).headlessValue(false);
 CONFIG(int, MiniMapDrawCommands).defaultValue(1).headlessValue(0).minimumValue(0);
 
 CONFIG(bool, MiniMapDrawProjectiles).defaultValue(true).headlessValue(false);
-CONFIG(bool, MiniMapDrawNotes).defaultValue(true).headlessValue(false);
+CONFIG(bool, MiniMapDrawNotes).defaultValue(true).headlessValue(false).description("Whether to draw notes (pings) on the minimap.");
 CONFIG(bool, SimpleMiniMapColors).defaultValue(false);
 
 CONFIG(bool, MiniMapRenderToTexture).defaultValue(true).safemodeValue(false).description("Asynchronous render MiniMap to a texture independent of screen FPS.");
@@ -402,6 +402,9 @@ void CMiniMap::ConfigCommand(const std::string& line)
 		} break;
 		case hashString("drawnotes"): {
 			drawNotes = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawNotes;
+			if (!drawNotes) {
+				notes.clear();
+			}
 		} break;
 		case hashString("simplecolors"): {
 			simpleColors = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !simpleColors;
@@ -1000,6 +1003,11 @@ std::string CMiniMap::GetTooltip(int x, int y)
 void CMiniMap::AddNotification(float3 pos, float3 color, float alpha)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+
+	if (!drawNotes) {
+		return;
+	}
+
 	Notification n;
 	n.pos = pos;
 	n.color[0] = color.x;
@@ -1509,9 +1517,7 @@ void CMiniMap::DrawCameraFrustumAndMouseSelection()
 		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
 
-	if (drawNotes) {
-		DrawNotes();
-	}
+	DrawNotes();
 
 	glPopMatrix();
 

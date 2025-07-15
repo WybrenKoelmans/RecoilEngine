@@ -1321,13 +1321,6 @@
   },
   "MiniMapDrawProjectiles": {
     "declarationFile": "/spring/rts/Game/UI/MiniMap.cpp",
-    "declarationLine": 74,
-    "defaultValue": 1,
-    "headlessValue": 0,
-    "type": "bool"
-  },
-  "MiniMapDrawNotes": {
-    "declarationFile": "/spring/rts/Game/UI/MiniMap.cpp",
     "declarationLine": 73,
     "defaultValue": 1,
     "headlessValue": 0,
