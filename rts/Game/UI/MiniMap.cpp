@@ -71,7 +71,7 @@ CONFIG(bool, MiniMapIcons).defaultValue(true).headlessValue(false);
 CONFIG(int, MiniMapDrawCommands).defaultValue(1).headlessValue(0).minimumValue(0);
 
 CONFIG(bool, MiniMapDrawProjectiles).defaultValue(true).headlessValue(false);
-CONFIG(bool, MiniMapDrawNotes).defaultValue(true).headlessValue(false).description("Whether to draw notes (pings) on the minimap.");
+CONFIG(bool, MiniMapDrawPings).defaultValue(true).headlessValue(false).description("Whether to draw pings (notes internally) on the minimap.");
 CONFIG(bool, SimpleMiniMapColors).defaultValue(false);
 
 CONFIG(bool, MiniMapRenderToTexture).defaultValue(true).safemodeValue(false).description("Asynchronous render MiniMap to a texture independent of screen FPS.");
@@ -108,7 +108,7 @@ CMiniMap::CMiniMap()
 
 	ConfigUpdate();
 
-	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapDrawNotes", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize"});
+	configHandler->NotifyOnChange(this, {"DualScreenMiniMapAspectRatio", "MiniMapCanFlip", "MiniMapDrawProjectiles", "MiniMapDrawPings", "MiniMapCursorScale", "MiniMapIcons", "MiniMapDrawCommands", "MiniMapButtonSize"});
 
 	UpdateGeometry();
 
@@ -192,7 +192,7 @@ void CMiniMap::ConfigUpdate()
 	aspectRatio = configHandler->GetBool("DualScreenMiniMapAspectRatio");
 	buttonSize = configHandler->GetInt("MiniMapButtonSize");
 	drawProjectiles = configHandler->GetBool("MiniMapDrawProjectiles");
-	drawNotes = configHandler->GetBool("MiniMapDrawNotes");
+	drawPings = configHandler->GetBool("MiniMapDrawPings");
 	drawCommands = configHandler->GetInt("MiniMapDrawCommands");
 	cursorScale = configHandler->GetFloat("MiniMapCursorScale");
 	useIcons = configHandler->GetBool("MiniMapIcons");
@@ -400,9 +400,9 @@ void CMiniMap::ConfigCommand(const std::string& line)
 		case hashString("drawprojectiles"): {
 			drawProjectiles = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawProjectiles;
 		} break;
-		case hashString("drawnotes"): {
-			drawNotes = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawNotes;
-			if (!drawNotes) {
+		case hashString("drawpings"): {
+			drawPings = (words.size() >= 2) ? !!atoi(words[1].c_str()) : !drawPings;
+			if (!drawPings) {
 				notes.clear();
 			}
 		} break;
@@ -1004,7 +1004,7 @@ void CMiniMap::AddNotification(float3 pos, float3 color, float alpha)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 
-	if (!drawNotes) {
+	if (!drawPings) {
 		return;
 	}
 
@@ -1688,7 +1688,7 @@ void CMiniMap::DrawButtons()
 void CMiniMap::DrawNotes()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	if (notes.empty() || !drawNotes) {
+	if (notes.empty() || !drawPings) {
 		return;
 	}
 
