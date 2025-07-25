@@ -71,7 +71,7 @@ CONFIG(bool, MiniMapIcons).defaultValue(true).headlessValue(false);
 CONFIG(int, MiniMapDrawCommands).defaultValue(1).headlessValue(0).minimumValue(0);
 
 CONFIG(bool, MiniMapDrawProjectiles).defaultValue(true).headlessValue(false);
-CONFIG(bool, MiniMapDrawPings).defaultValue(true).headlessValue(false).description("Whether to draw pings (notes internally) on the minimap.");
+CONFIG(bool, MiniMapDrawPings).defaultValue(true).headlessValue(false).description("Whether to draw pings on the minimap.");
 CONFIG(bool, SimpleMiniMapColors).defaultValue(false);
 
 CONFIG(bool, MiniMapRenderToTexture).defaultValue(true).safemodeValue(false).description("Asynchronous render MiniMap to a texture independent of screen FPS.");
