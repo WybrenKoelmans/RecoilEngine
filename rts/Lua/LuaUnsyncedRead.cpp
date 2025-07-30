@@ -606,7 +606,7 @@ int LuaUnsyncedRead::GetLuaMemUsage(lua_State* L)
 
 	// handle and global stats
 	const SLuaAllocState* lhs = &lcd->allocState;
-		  SLuaAllocState  lgs;
+	      SLuaAllocState  lgs;
 
 	spring_lua_alloc_get_stats(&lgs);
 
@@ -1092,7 +1092,7 @@ int LuaUnsyncedRead::IsAboveMiniMap(lua_State* L)
 	const int y1 = y0 + minimap->GetSizeY();
 
 	lua_pushboolean(L, (x >= x0) && (x < x1) &&
-					   (y >= y0) && (y < y1));
+	                   (y >= y0) && (y < y1));
 
 	return 1;
 }
@@ -1644,11 +1644,11 @@ int LuaUnsyncedRead::IsUnitIcon(lua_State* L)
 int LuaUnsyncedRead::IsAABBInView(lua_State* L)
 {
 	float3 mins = float3(luaL_checkfloat(L, 1),
-						 luaL_checkfloat(L, 2),
-						 luaL_checkfloat(L, 3));
+	                     luaL_checkfloat(L, 2),
+	                     luaL_checkfloat(L, 3));
 	float3 maxs = float3(luaL_checkfloat(L, 4),
-						 luaL_checkfloat(L, 5),
-						 luaL_checkfloat(L, 6));
+	                     luaL_checkfloat(L, 5),
+	                     luaL_checkfloat(L, 6));
 
 	if (mins.x > maxs.x) std::swap(mins.x, maxs.x);
 	if (mins.y > maxs.y) std::swap(mins.y, maxs.y);
@@ -1671,8 +1671,8 @@ int LuaUnsyncedRead::IsAABBInView(lua_State* L)
 int LuaUnsyncedRead::IsSphereInView(lua_State* L)
 {
 	const float3 pos(luaL_checkfloat(L, 1),
-					 luaL_checkfloat(L, 2),
-					 luaL_checkfloat(L, 3));
+	                 luaL_checkfloat(L, 2),
+	                 luaL_checkfloat(L, 3));
 	const float radius = lua_israwnumber(L, 4) ? lua_tofloat(L, 4) : 0.0f;
 
 	lua_pushboolean(L, camera->InView(pos, radius));
@@ -2725,23 +2725,14 @@ int LuaUnsyncedRead::GetCameraNames(lua_State* L)
 
 /***
  * @function Spring.GetCameraState
- * @param useReturns [boolean] (optional, default: true)
- *   If true or omitted, returns a table with all camera state fields. If false, returns the camera name and a variable number of camera-specific values as separate return values.
- *
- * @return table cameraState (if useReturns is true or omitted)
- *   Table with the following fields:
- *     - name: string (camera controller name)
- *     - [other fields]: number (camera state fields, depend on controller)
- *
- * @return string name, ... (if useReturns is false)
- *   The camera controller name, followed by a variable number of values depending on the current camera mode:
- *     - FirstPerson/RotOverhead: name, oldHeight
- *     - Overhead: name, height, angle, flipped
- *     - Spring: name, rx, ry, rz, dist
- *     - Free: name, rx, ry, rz, vx, vy, vz, avx, avy, avz
- *     - Overview/other: name
- *
- * Note: For common camera fields (position, direction, FOV), use GetCameraPosition, GetCameraDirection, and GetCameraFOV.
+ * @param useTable false
+ * @return CameraName name
+ * @return any ... depends on the current controller mode.
+ */
+/***
+ * @function Spring.GetCameraState
+ * @param useTable true? (Default: `true`) Return a table instead of multiple values.
+ * @return CameraState cameraState
  */
 int LuaUnsyncedRead::GetCameraState(lua_State* L)
 {
@@ -2915,8 +2906,8 @@ int LuaUnsyncedRead::GetCameraVectors(lua_State* L)
 int LuaUnsyncedRead::WorldToScreenCoords(lua_State* L)
 {
 	const float3 worldPos(luaL_checkfloat(L, 1),
-						  luaL_checkfloat(L, 2),
-						  luaL_checkfloat(L, 3));
+	                      luaL_checkfloat(L, 2),
+	                      luaL_checkfloat(L, 3));
 	const float3 vpPos = camera->CalcViewPortCoordinates(worldPos);
 	lua_pushnumber(L, vpPos.x);
 	lua_pushnumber(L, vpPos.y);
@@ -3771,7 +3762,7 @@ int LuaUnsyncedRead::GetConsoleBuffer(lua_State* L)
 	infoConsole->GetRawLines(lines);
 
 	const size_t lineCount = lines.size();
-		  size_t startLine = 0;
+	      size_t startLine = 0;
 
 	if (lua_gettop(L) >= 1)
 		startLine = lineCount - std::min(lineCount, size_t(luaL_checkint(L, 1)));
