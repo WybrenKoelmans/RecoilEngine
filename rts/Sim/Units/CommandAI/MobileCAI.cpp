@@ -649,10 +649,11 @@ void CMobileCAI::ExecuteGuard(Command& c)
 	float3 deltaPos = guardee->pos - owner->pos;
 	const float sqrGuardDistance = deltaPos.SqLength2D();
 
-	// Helper lambda to check if goal should be reset (avoid code duplication)
-	auto shouldResetGoal = [&](const float3& newGoalPos) {
-		return ((owner->moveType->goalPos - newGoalPos).SqLength2D() > sqrRecalculateThreshold) ||
-		       (owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + 1 + SQUARE_SIZE * 2);
+	auto resetGoalIfNeeded = [&](const float3& newGoalPos) {
+		if (((owner->moveType->goalPos - newGoalPos).SqLength2D() > sqrRecalculateThreshold) ||
+		    (owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + 1 + SQUARE_SIZE * 2)) {
+			SetGoal(newGoalPos, owner->pos);
+		}
 	};
 
 	const bool guardeeStopped = guardee->speed.w < epsilonish;
@@ -666,9 +667,7 @@ void CMobileCAI::ExecuteGuard(Command& c)
 			return;
 		}
 
-		if (shouldResetGoal(goalPos)) {
-			SetGoal(goalPos, owner->pos);
-		}
+		resetGoalIfNeeded(goalPos);
 		return;
 	}
 
@@ -686,9 +685,7 @@ void CMobileCAI::ExecuteGuard(Command& c)
 		StopSlowGuard();
 	}
 
-	if (shouldResetGoal(goalPos)) {
-		SetGoal(goalPos, owner->pos);
-	}
+	resetGoalIfNeeded(goalPos);
 }
 
 
