@@ -637,27 +637,58 @@ void CMobileCAI::ExecuteGuard(Command& c)
 		return;
 	}
 
-	const float3 dif = (guardee->pos - owner->pos).SafeNormalize();
-	const float3 goal = guardee->pos - dif * (guardee->radius + owner->radius + 64.0f);
-	const bool resetGoal =
-		((owner->moveType->goalPos - goal).SqLength2D() > 1600.0f) ||
-		(owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + 1 + SQUARE_SIZE * 2);
+	constexpr float epsilonish = 0.5f;
+	const float sqrRecalculateThreshold = modInfo.guardRecalculateThresholdSquared;
+	const float sqrStoppedProximityGoal = modInfo.guardStoppedProximityGoalSquared;
+	const float stoppedExtraDistanceOffset = modInfo.guardStoppedExtraDistance;
+	const float sqrMovingProximityGoal = modInfo.guardMovingProximityGoalSquared;
+	const float movingIntervalMultiplier = modInfo.guardMovingIntervalMultiplier;
+	const float maxTimeToIntercept = modInfo.guardInterceptionLimit;
 
-	if (resetGoal)
-		SetGoal(goal, owner->pos);
+	float3 goalPos = owner->pos;
+	float3 deltaPos = guardee->pos - owner->pos;
+	const float sqrGuardDistance = deltaPos.SqLength2D();
 
-	if ((goal - owner->pos).SqLength2D() < 6400.0f) {
-		StartSlowGuard(guardee->moveType->GetMaxSpeed());
+	// Helper lambda to check if goal should be reset (avoid code duplication)
+	auto shouldResetGoal = [&](const float3& newGoalPos) {
+		return ((owner->moveType->goalPos - newGoalPos).SqLength2D() > sqrRecalculateThreshold) ||
+		       (owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + 1 + SQUARE_SIZE * 2);
+	};
 
-		if ((goal - owner->pos).SqLength2D() < 1800.0f) {
+	const bool guardeeStopped = guardee->speed.w < epsilonish;
+	if (guardeeStopped) {
+		const float3 guardeeDirection = deltaPos.SafeNormalize2D();
+		const float stoppedDistance = guardee->radius + owner->radius + stoppedExtraDistanceOffset;
+		goalPos = guardee->pos - guardeeDirection * stoppedDistance;
+		if (goalPos.SqDistance2D(owner->pos) < sqrStoppedProximityGoal) {
 			StopMove();
 			NonMoving();
+			return;
 		}
 
+		if (shouldResetGoal(goalPos)) {
+			SetGoal(goalPos, owner->pos);
+		}
 		return;
 	}
 
-	StopSlowGuard();
+	const bool inGuardingRange = sqrGuardDistance < sqrMovingProximityGoal;
+	if (inGuardingRange) {
+		StartSlowGuard(guardee->speed.w);
+		goalPos = owner->pos + guardee->speed * movingIntervalMultiplier;
+	} else { // If we are too far away, move towards the predicted position of the guardee
+		const float ownerSpeed = owner->speed.w;
+		float timeToIntercept = 0.0f;
+		if (ownerSpeed > epsilonish) {
+			timeToIntercept = math::sqrt(sqrGuardDistance) / ownerSpeed;
+		}
+		goalPos = guardee->pos + guardee->speed * std::min(timeToIntercept, maxTimeToIntercept);
+		StopSlowGuard();
+	}
+
+	if (shouldResetGoal(goalPos)) {
+		SetGoal(goalPos, owner->pos);
+	}
 }
 
 
