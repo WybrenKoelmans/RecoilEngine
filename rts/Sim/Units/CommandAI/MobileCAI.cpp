@@ -638,10 +638,10 @@ void CMobileCAI::ExecuteGuard(Command& c)
 	}
 
 	constexpr float epsilonish = 0.5f;
-	const float sqrRecalculateThreshold = modInfo.guardRecalculateThresholdSquared;
-	const float sqrStoppedProximityGoal = modInfo.guardStoppedProximityGoalSquared;
+	const float sqrRecalculateThreshold = modInfo.guardRecalculateThreshold;
+	const float sqrStoppedProximityGoal = modInfo.guardStoppedProximityGoal;
 	const float stoppedExtraDistanceOffset = modInfo.guardStoppedExtraDistance;
-	const float sqrMovingProximityGoal = modInfo.guardMovingProximityGoalSquared;
+	const float sqrMovingProximityGoal = modInfo.guardMovingProximityGoal;
 	const float movingIntervalMultiplier = modInfo.guardMovingIntervalMultiplier;
 	const float maxTimeToIntercept = modInfo.guardInterceptionLimit;
 

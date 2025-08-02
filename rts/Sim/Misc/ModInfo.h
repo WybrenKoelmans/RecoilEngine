@@ -64,13 +64,13 @@ public:
 
 	// Guard behaviour
 	/// The distance that a guardee must move before the guard goal is recalculated
-	float guardRecalculateThresholdSquared;
+	float guardRecalculateThreshold;
 	/// The distance that a guardian will stop at nearing a stopped guardee
-	float guardStoppedProximityGoalSquared;
+	float guardStoppedProximityGoal;
 	/// The extra distance a guardian will keep from a stopped guardee
 	float guardStoppedExtraDistance;
 	/// The distance the guardian is considered to be in guarding range and will match the velocity
-	float guardMovingProximityGoalSquared;
+	float guardMovingProximityGoal;
 	/// A multiplier for the moving goal while guarding, smaller values will result in higher detail movement but more performance cost
 	float guardMovingIntervalMultiplier;
 	/// Limit for the intercept when a guardian is not in guarding range
