@@ -637,7 +637,7 @@ void CMobileCAI::ExecuteGuard(Command& c)
 		return;
 	}
 
-	constexpr float epsilonish = 0.5f;
+	constexpr float epsilonish = INV_GAME_SPEED;
 	const float sqrRecalculateThreshold = modInfo.guardRecalculateThreshold;
 	const float sqrStoppedProximityGoal = modInfo.guardStoppedProximityGoal;
 	const float stoppedExtraDistanceOffset = modInfo.guardStoppedExtraDistance;
@@ -650,8 +650,10 @@ void CMobileCAI::ExecuteGuard(Command& c)
 	const float sqrGuardDistance = deltaPos.SqLength2D();
 
 	auto resetGoalIfNeeded = [&](const float3& newGoalPos) {
+		// No idea what exactly this is for, best not to touch until investigated.
+		static constexpr float MAGIC_RECALC_CONSTANT = 1 + SQUARE_SIZE * 2;
 		if (((owner->moveType->goalPos - newGoalPos).SqLength2D() > sqrRecalculateThreshold) ||
-		    (owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + 1 + SQUARE_SIZE * 2)) {
+		    (owner->moveType->goalPos - owner->pos).SqLength2D() < Square(owner->moveType->GetMaxSpeed() * GAME_SPEED + MAGIC_RECALC_CONSTANT)) {
 			SetGoal(newGoalPos, owner->pos);
 		}
 	};
@@ -674,7 +676,7 @@ void CMobileCAI::ExecuteGuard(Command& c)
 	const bool inGuardingRange = sqrGuardDistance < sqrMovingProximityGoal;
 	if (inGuardingRange) {
 		StartSlowGuard(guardee->speed.w);
-		goalPos = owner->pos + guardee->speed * movingIntervalMultiplier;
+		goalPos = owner->pos + guardee->speed * movingIntervalMultiplier * GAME_SPEED;
 	} else { // If we are too far away, move towards the predicted position of the guardee
 		const float ownerSpeed = owner->speed.w;
 		float timeToIntercept = 0.0f;

@@ -58,7 +58,7 @@ void CModInfo::ResetState()
 	// 	guardStoppedProximityGoal = 50.0f;  // Distance that a guardian will stop at nearing a stopped guardee
 	// 	guardStoppedExtraDistance = 100.0f;  // The extra distance a guardian will keep from a stopped guardee
 	// 	guardMovingProximityGoal = 100.0f;   // Distance the guardian is considered to be in guarding range and will match the velocity
-	// 	guardMovingIntervalMultiplier = 64.0f;  // A multiplier for the moving goal while guarding, smaller values will result in higher detail movement but more performance cost
+	// 	guardMovingIntervalMultiplier = 2.13f;  // A multiplier for the moving goal while guarding, smaller values will result in higher detail movement but more performance cost
 	// 	guardInterceptionLimit = 128.0f;        // Limit for the intercept when a guardian is not in guarding range
 	// }
 	{
