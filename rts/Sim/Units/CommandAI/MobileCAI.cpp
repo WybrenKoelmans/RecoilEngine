@@ -637,7 +637,7 @@ void CMobileCAI::ExecuteGuard(Command& c)
 		return;
 	}
 
-	constexpr float epsilonish = INV_GAME_SPEED;
+	constexpr float epsilonish = 1.0f * INV_GAME_SPEED;
 	const float sqrRecalculateThreshold = modInfo.guardRecalculateThreshold;
 	const float sqrStoppedProximityGoal = modInfo.guardStoppedProximityGoal;
 	const float stoppedExtraDistanceOffset = modInfo.guardStoppedExtraDistance;
