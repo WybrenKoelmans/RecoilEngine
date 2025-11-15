@@ -502,21 +502,39 @@ void CWorldDrawer::Draw() const
 				glDisable(GL_CULL_FACE);
 				glDisable(GL_BLEND);
 				
-				// Draw a fullscreen quad with varying colors
+				// Draw a fullscreen quad with varying colors (background gradient)
 				glBegin(GL_QUADS);
 				glColor3f(1.0f, 0.0f, 0.0f); // Red
-				glVertex3f(-0.5f, -0.5f, 0.0f);
+				glVertex3f(-1.0f, -1.0f, 0.0f);
 				glColor3f(0.0f, 1.0f, 0.0f); // Green
-				glVertex3f(0.5f, -0.5f, 0.0f);
+				glVertex3f(1.0f, -1.0f, 0.0f);
 				glColor3f(0.0f, 0.0f, 1.0f); // Blue
-				glVertex3f(0.5f, 0.5f, 0.0f);
+				glVertex3f(1.0f, 1.0f, 0.0f);
 				glColor3f(1.0f, 1.0f, 0.0f); // Yellow
-				glVertex3f(-0.5f, 0.5f, 0.0f);
+				glVertex3f(-1.0f, 1.0f, 0.0f);
 				glEnd();
 				CheckGLError("fullscreen quad");
 
+				// Now draw a cube with proper projection
+				glMatrixMode(GL_PROJECTION);
+				glLoadIdentity();
+				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
+				
+				glMatrixMode(GL_MODELVIEW);
+				glLoadIdentity();
+				
+				glEnable(GL_DEPTH_TEST);
+				glDepthMask(GL_TRUE);
+				glClear(GL_DEPTH_BUFFER_BIT);  // Clear depth but keep color
+				
+				// Position cube 3 meters in front of viewer
+				glTranslatef(0.0f, 0.0f, -3000.0f);  // Using map units
+				glScalef(200.0f, 200.0f, 200.0f);
+				DrawVRTestCube();
+				CheckGLError("cube drawing");
+
 				if (logCounter < 5) {
-					LOG_L(L_INFO, "[VR] Drew fullscreen quad for eye %d", eye.eyeIndex);
+					LOG_L(L_INFO, "[VR] Drew fullscreen quad and cube for eye %d", eye.eyeIndex);
 				}
 
 				glFlush();
