@@ -527,7 +527,10 @@ void CWorldDrawer::Draw() const
 				glDepthMask(GL_TRUE);
 				glClear(GL_DEPTH_BUFFER_BIT);  // Clear depth but keep color
 				
-				// Position cube 3 meters in front of viewer
+				// Apply eye offset for proper stereo (translate by negative eye position)
+				glTranslatef(-eye.eyeOffsetWorld.x, -eye.eyeOffsetWorld.y, -eye.eyeOffsetWorld.z);
+				
+				// Position cube 3 meters in front of center of both eyes (world origin)
 				glTranslatef(0.0f, 0.0f, -3000.0f);  // Using map units
 				glScalef(200.0f, 200.0f, 200.0f);
 				DrawVRTestCube();
