@@ -515,7 +515,7 @@ void CWorldDrawer::Draw() const
 				glEnd();
 				CheckGLError("fullscreen quad");
 
-				// Now draw a cube with proper projection
+				// Now draw a cube with proper projection and view transform
 				glMatrixMode(GL_PROJECTION);
 				glLoadIdentity();
 				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
@@ -527,11 +527,21 @@ void CWorldDrawer::Draw() const
 				glDepthMask(GL_TRUE);
 				glClear(GL_DEPTH_BUFFER_BIT);  // Clear depth but keep color
 				
-				// Apply eye offset for proper stereo (translate by negative eye position)
-				glTranslatef(-eye.eyeOffsetWorld.x, -eye.eyeOffsetWorld.y, -eye.eyeOffsetWorld.z);
+				// Create view matrix from HMD orientation and position
+				// 1. Apply inverse of eye orientation (convert world to view space)
+				CQuaternion eyeQuat = eye.relativeOrientation;
+				eyeQuat.Normalize();
+				CQuaternion invQuat = eyeQuat.Inverse();
+				CMatrix44f viewMatrix = invQuat.ToRotMatrix();
 				
-				// Position cube 3 meters in front of center of both eyes (world origin)
-				glTranslatef(0.0f, 0.0f, -3000.0f);  // Using map units
+				// 2. Apply inverse of eye position (camera at eye position, looking at world)
+				float3 eyePosWorld = eye.eyeOffsetWorld;
+				viewMatrix.Translate(-eyePosWorld.x, -eyePosWorld.y, -eyePosWorld.z);
+				
+				glLoadMatrixf(viewMatrix.m);
+				
+				// Position cube 3 meters in front of viewer
+				glTranslatef(0.0f, 0.0f, -3000.0f);
 				glScalef(200.0f, 200.0f, 200.0f);
 				DrawVRTestCube();
 				CheckGLError("cube drawing");
