@@ -97,6 +97,10 @@ if (WIN32)
 	list(APPEND engineCommonLibraries ${WIN32_LIBRARIES})
 endif (WIN32)
 
+if (USE_VR AND OpenXR_FOUND)
+	list(APPEND engineCommonLibraries OpenXR::openxr_loader)
+endif ()
+
 if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD")
 	#tcmalloc on freebsd is broken, default disable it (#4754)
 	set(USE_TCMALLOC_DEFAULT FALSE)
