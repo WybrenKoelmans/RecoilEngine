@@ -7,6 +7,7 @@
 #include "Game/Camera.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/GL/myGL.h"
+#include "Sim/Misc/GlobalConstants.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Exceptions.h"
 #include "System/SpringMath.h"
@@ -87,7 +88,8 @@ static CQuaternion FromXr(const XrQuaternionf& q)
 
 static float3 FromXr(const XrVector3f& v)
 {
-	return float3(v.x, v.y, -v.z); // flip Z to match engine forward
+	constexpr float metersToElmos = static_cast<float>(SQUARE_SIZE);
+	return float3(v.x, v.y, -v.z) * metersToElmos; // flip Z to match engine forward and scale to engine units
 }
 
 static XrPosef IdentityPose()
@@ -255,7 +257,9 @@ bool OpenXRSystem::RenderEyes(const EyeRenderCallback& callback, const CCamera& 
 
 	bool renderedAny = false;
 
-	for (uint32_t eye = 0; eye < viewCount; ++eye) {
+	const uint32_t eyeCount = std::min(activeViewCount, static_cast<uint32_t>(swapchains.size()));
+
+	for (uint32_t eye = 0; eye < eyeCount; ++eye) {
 		EyeRenderTarget target = BuildEyeTarget(eye, baseCamera);
 		if (target.framebuffer == 0)
 			continue;
@@ -279,9 +283,9 @@ void OpenXRSystem::EndFrame()
 	endInfo.environmentBlendMode = environmentBlendMode;
 	const XrCompositionLayerBaseHeader* layerPtrs[1] = {nullptr};
 
-	if (!projectionViews.empty()) {
+	if (!projectionViews.empty() && activeViewCount > 0) {
 		projectionLayer.space = appSpace;
-		projectionLayer.viewCount = viewCount;
+		projectionLayer.viewCount = activeViewCount;
 		projectionLayer.views = projectionViews.data();
 		projectionLayer.layerFlags = 0;
 		if (environmentBlendMode == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
@@ -295,8 +299,8 @@ void OpenXRSystem::EndFrame()
 		endInfo.layers = nullptr;
 	}
 
-	const bool submitted = CheckXrResult(xrEndFrame(session, &endInfo), "xrEndFrame");
 	ReleaseSwapchainImages();
+	const bool submitted = CheckXrResult(xrEndFrame(session, &endInfo), "xrEndFrame");
 
 	frameSubmitted = submitted;
 }
@@ -393,6 +397,7 @@ bool OpenXRSystem::InitializeSystem()
 		return false;
 
 	viewCount = viewCountOutput;
+	activeViewCount = viewCount;
 	viewConfigurationViews = viewConfigViews;
 
 	uint32_t blendModeCount = 0;
@@ -541,6 +546,10 @@ bool OpenXRSystem::InitializeSwapchains()
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth);
 
+			const GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
+			glDrawBuffers(1, drawBuffers);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+
 			const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 			if (status != GL_FRAMEBUFFER_COMPLETE) {
 				LOG_L(L_ERROR, "[OpenXR] Swapchain framebuffer incomplete (eye %u, image %u, status 0x%x)", eye, i, status);
@@ -553,6 +562,8 @@ bool OpenXRSystem::InitializeSwapchains()
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glBindRenderbuffer(GL_RENDERBUFFER, 0);
+	glDrawBuffer(GL_BACK);
+	glReadBuffer(GL_BACK);
 
 	return true;
 }
@@ -619,6 +630,8 @@ bool OpenXRSystem::AcquireSwapchainImages()
 	if (swapchains.empty())
 		return false;
 
+	activeViewCount = 0;
+
 	XrViewState viewState{XR_TYPE_VIEW_STATE};
 	uint32_t viewCountOutput = viewCount;
 
@@ -630,6 +643,12 @@ bool OpenXRSystem::AcquireSwapchainImages()
 	if (!CheckXrResult(xrLocateViews(session, &locateInfo, &viewState, viewCount, &viewCountOutput, views.data()), "xrLocateViews"))
 		return false;
 
+	activeViewCount = std::min(viewCountOutput, viewCount);
+	if (activeViewCount == 0) {
+		LOG_L(L_WARNING, "[OpenXR] No views located this frame (viewCountOutput=%u)", viewCountOutput);
+		return false;
+	}
+
 	if ((viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
 		LOG_L(L_WARNING, "[OpenXR] View orientation not valid this frame");
 	}
@@ -638,7 +657,7 @@ bool OpenXRSystem::AcquireSwapchainImages()
 		LOG_L(L_WARNING, "[OpenXR] View position not valid this frame");
 	}
 
-	for (uint32_t eye = 0; eye < viewCount; ++eye) {
+	for (uint32_t eye = 0; eye < activeViewCount; ++eye) {
 		auto& swapchain = swapchains[eye];
 		XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
 		uint32_t imageIndex = 0;
@@ -661,6 +680,19 @@ bool OpenXRSystem::AcquireSwapchainImages()
 		projectionViews[eye].subImage.imageRect.offset = {0, 0};
 		projectionViews[eye].subImage.imageRect.extent = {swapchain.width, swapchain.height};
 		projectionViews[eye].subImage.imageArrayIndex = 0;
+
+		static int acquireLogCounter = 0;
+		if (acquireLogCounter < 120) {
+			const XrVector3f& xrPos = views[eye].pose.position;
+			LOG_L(L_INFO, "[OpenXR] Acquire eye %u img %u size=%ux%u pose(m)=<%.3f %.3f %.3f>",
+				eye, imageIndex, swapchain.width, swapchain.height,
+				xrPos.x, xrPos.y, xrPos.z);
+			acquireLogCounter++;
+		}
+	}
+
+	for (uint32_t eye = activeViewCount; eye < swapchains.size(); ++eye) {
+		swapchains[eye].activeImageIndex = kInvalidSwapchainIndex;
 	}
 
 	return true;
@@ -694,7 +726,7 @@ CQuaternion OpenXRSystem::ConvertOrientation(const CQuaternion& raw) const
 EyeRenderTarget OpenXRSystem::BuildEyeTarget(int eyeIndex, const CCamera& baseCamera)
 {
 	EyeRenderTarget target;
-	if (eyeIndex < 0 || static_cast<uint32_t>(eyeIndex) >= viewCount)
+	if (eyeIndex < 0 || static_cast<uint32_t>(eyeIndex) >= activeViewCount)
 		return target;
 
 	auto& swapchain = swapchains[eyeIndex];

@@ -113,6 +113,7 @@ private:
 	XrSystemId systemId = XR_NULL_SYSTEM_ID;
 	XrViewConfigurationType viewConfigType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 	uint32_t viewCount = 0;
+	uint32_t activeViewCount = 0;
 	PFN_xrGetOpenGLGraphicsRequirementsKHR getGraphicsRequirements = nullptr;
 
 	struct SwapchainData {

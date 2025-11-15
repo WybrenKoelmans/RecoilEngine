@@ -22,7 +22,101 @@
 #include "Rendering/Features/FeatureDrawer.h"
 #if defined(USE_VR)
 #include "Rendering/VR/VRSystem.h"
+#include "Rendering/UniformConstants.h"
 #endif
+#if defined(USE_VR)
+namespace {
+
+void CheckGLError(const char* label) {
+	GLenum err;
+	while ((err = glGetError()) != GL_NO_ERROR) {
+		LOG_L(L_ERROR, "[VR] OpenGL Error at %s: 0x%x", label, err);
+	}
+}
+
+void DrawVRTestCube()
+{
+	static float angle = 0.0f;
+	angle += 1.0f;
+	if (angle > 360.0f) {
+		angle -= 360.0f;
+	}
+
+	const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+	const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+#ifdef GL_TEXTURE_2D
+	const GLboolean textureEnabled = glIsEnabled(GL_TEXTURE_2D);
+#endif
+
+#ifdef GL_TEXTURE_2D
+	glDisable(GL_TEXTURE_2D);
+#endif
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+
+	glRotatef(angle, 1.0f, 1.0f, 0.0f);
+
+	glBegin(GL_QUADS);
+	// Front Face
+	glColor3f(1.0f, 0.0f, 0.0f);
+	glVertex3f(-1.0f, -1.0f, 1.0f);
+	glVertex3f(1.0f, -1.0f, 1.0f);
+	glVertex3f(1.0f, 1.0f, 1.0f);
+	glVertex3f(-1.0f, 1.0f, 1.0f);
+	// Back Face
+	glColor3f(0.0f, 1.0f, 0.0f);
+	glVertex3f(-1.0f, -1.0f, -1.0f);
+	glVertex3f(-1.0f, 1.0f, -1.0f);
+	glVertex3f(1.0f, 1.0f, -1.0f);
+	glVertex3f(1.0f, -1.0f, -1.0f);
+	// Top Face
+	glColor3f(0.0f, 0.0f, 1.0f);
+	glVertex3f(-1.0f, 1.0f, -1.0f);
+	glVertex3f(-1.0f, 1.0f, 1.0f);
+	glVertex3f(1.0f, 1.0f, 1.0f);
+	glVertex3f(1.0f, 1.0f, -1.0f);
+	// Bottom Face
+	glColor3f(1.0f, 1.0f, 0.0f);
+	glVertex3f(-1.0f, -1.0f, -1.0f);
+	glVertex3f(1.0f, -1.0f, -1.0f);
+	glVertex3f(1.0f, -1.0f, 1.0f);
+	glVertex3f(-1.0f, -1.0f, 1.0f);
+	// Right face
+	glColor3f(1.0f, 0.0f, 1.0f);
+	glVertex3f(1.0f, -1.0f, -1.0f);
+	glVertex3f(1.0f, 1.0f, -1.0f);
+	glVertex3f(1.0f, 1.0f, 1.0f);
+	glVertex3f(1.0f, -1.0f, 1.0f);
+	// Left Face
+	glColor3f(0.0f, 1.0f, 1.0f);
+	glVertex3f(-1.0f, -1.0f, -1.0f);
+	glVertex3f(-1.0f, -1.0f, 1.0f);
+	glVertex3f(-1.0f, 1.0f, 1.0f);
+	glVertex3f(-1.0f, 1.0f, -1.0f);
+	glEnd();
+
+	if (depthEnabled)
+		glEnable(GL_DEPTH_TEST);
+	else
+		glDisable(GL_DEPTH_TEST);
+
+	if (blendEnabled)
+		glEnable(GL_BLEND);
+	else
+		glDisable(GL_BLEND);
+
+#ifdef GL_TEXTURE_2D
+	if (textureEnabled)
+		glEnable(GL_TEXTURE_2D);
+	else
+		glDisable(GL_TEXTURE_2D);
+#endif
+}
+
+}
+#endif
+
 #include "Rendering/Env/Particles/ProjectileDrawer.h"
 #include <algorithm>
 #include "Rendering/Units/UnitDrawer.h"
@@ -156,7 +250,7 @@ void CWorldDrawer::InitPost() const
 		IWater::SetWater(-1);
 	}
 	{
-		ISky::GetSky()->SetupFog();
+		// ISky::GetSky()->SetupFog();
 	}
 	lock = {}; //unlock
 	{
@@ -354,31 +448,79 @@ void CWorldDrawer::Draw() const
 		const CQuaternion baseOrientation = CQuaternion::FromEulerYPR(baseRot);
 		bool renderedStereo = vrSystem->RenderEyes(
 			[&](const vr::EyeRenderTarget& eye) {
-				if (eye.framebuffer == 0 || eye.width <= 0 || eye.height <= 0)
+				if (eye.framebuffer == 0 || eye.width <= 0 || eye.height <= 0) {
+					LOG_L(L_WARNING, "[VR] Invalid eye target: fb=%u size=%dx%d", eye.framebuffer, eye.width, eye.height);
 					return;
+				}
+
+				static int logCounter = 0;
+				if (logCounter < 5) {
+					LOG_L(L_INFO, "[VR] Eye %d: fb=%u size=%dx%d frustum=[%.3f,%.3f,%.3f,%.3f] near=%.3f far=%.3f",
+						eye.eyeIndex, eye.framebuffer, eye.width, eye.height,
+						eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop,
+						eye.nearPlane, eye.farPlane);
+					logCounter++;
+				}
 
 				glBindFramebuffer(GL_FRAMEBUFFER, eye.framebuffer);
+				CheckGLError("glBindFramebuffer");
 
-				globalRendering->viewPosX = 0;
-				globalRendering->viewPosY = 0;
-				globalRendering->viewSizeX = eye.width;
-				globalRendering->viewSizeY = eye.height;
-				const int safeWidth = std::max(eye.width, 1);
-				const int safeHeight = std::max(eye.height, 1);
-				globalRendering->aspectRatio = static_cast<float>(safeWidth) / static_cast<float>(safeHeight);
-				globalRendering->pixelX = 1.0f / static_cast<float>(safeWidth);
-				globalRendering->pixelY = 1.0f / static_cast<float>(safeHeight);
+				// Check framebuffer status
+				GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+				if (fbStatus != GL_FRAMEBUFFER_COMPLETE && logCounter < 5) {
+					LOG_L(L_ERROR, "[VR] Framebuffer not complete: 0x%x", fbStatus);
+				}
 
-				camera->SetPos(basePos + eye.eyeOffsetWorld);
+				glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+				CheckGLError("glClear");
 
-				CQuaternion finalOrientation = baseOrientation * eye.relativeOrientation;
-				finalOrientation.Normalize();
-				camera->SetRot(finalOrientation.ToEulerYPR());
+				glEnable(GL_DEPTH_TEST);
+				glDepthMask(GL_TRUE);
+				glDisable(GL_CULL_FACE);
+				CheckGLError("GL state setup");
 
-				camera->UpdateLoadViewport(0, 0, eye.width, eye.height);
-				camera->SetAsymmetricFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
+				glMatrixMode(GL_PROJECTION);
+				glLoadIdentity();
+				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
+				CheckGLError("glFrustum");
 
-				DrawEyeScene();
+				// Log projection matrix
+				if (logCounter < 5) {
+					GLfloat projMat[16];
+					glGetFloatv(GL_PROJECTION_MATRIX, projMat);
+					LOG_L(L_INFO, "[VR] Projection matrix: [%.3f %.3f %.3f %.3f]", projMat[0], projMat[5], projMat[10], projMat[14]);
+				}
+
+				// Draw a simple fullscreen quad test in NDC coordinates
+				glMatrixMode(GL_PROJECTION);
+				glLoadIdentity();
+				glMatrixMode(GL_MODELVIEW);
+				glLoadIdentity();
+				
+				glDisable(GL_DEPTH_TEST);
+				glDisable(GL_CULL_FACE);
+				glDisable(GL_BLEND);
+				
+				// Draw a fullscreen quad with varying colors
+				glBegin(GL_QUADS);
+				glColor3f(1.0f, 0.0f, 0.0f); // Red
+				glVertex3f(-0.5f, -0.5f, 0.0f);
+				glColor3f(0.0f, 1.0f, 0.0f); // Green
+				glVertex3f(0.5f, -0.5f, 0.0f);
+				glColor3f(0.0f, 0.0f, 1.0f); // Blue
+				glVertex3f(0.5f, 0.5f, 0.0f);
+				glColor3f(1.0f, 1.0f, 0.0f); // Yellow
+				glVertex3f(-0.5f, 0.5f, 0.0f);
+				glEnd();
+				CheckGLError("fullscreen quad");
+
+				if (logCounter < 5) {
+					LOG_L(L_INFO, "[VR] Drew fullscreen quad for eye %d", eye.eyeIndex);
+				}
+
+				glFlush();
+				CheckGLError("glFlush");
 			},
 			*camera
 		);
@@ -403,9 +545,10 @@ void CWorldDrawer::Draw() const
 
 		vrSystem->EndFrame();
 
-		if (renderedStereo) {
+		if (renderedStereo)
 			return;
-		}
+
+		LOG_L(L_WARNING, "[VR] RenderEyes callback produced no output");
 	}
 #endif
 
