@@ -36,11 +36,7 @@ void CheckGLError(const char* label) {
 
 void DrawVRTestCube()
 {
-	static float angle = 0.0f;
-	angle += 1.0f;
-	if (angle > 360.0f) {
-		angle -= 360.0f;
-	}
+	// No rotation - keep cube stationary
 
 	const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
 	const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
@@ -54,8 +50,7 @@ void DrawVRTestCube()
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
-
-	glRotatef(angle, 1.0f, 1.0f, 0.0f);
+	glDisable(GL_CULL_FACE);  // Disable face culling to see all sides
 
 	glBegin(GL_QUADS);
 	// Front Face
@@ -471,54 +466,43 @@ void CWorldDrawer::Draw() const
 					LOG_L(L_ERROR, "[VR] Framebuffer not complete: 0x%x", fbStatus);
 				}
 
-				glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
+				// Clear with a neutral color
+				glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 				CheckGLError("glClear");
-
-				glEnable(GL_DEPTH_TEST);
-				glDepthMask(GL_TRUE);
-				glDisable(GL_CULL_FACE);
-				CheckGLError("GL state setup");
-
-				glMatrixMode(GL_PROJECTION);
-				glLoadIdentity();
-				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
-				CheckGLError("glFrustum");
-
-				// Log projection matrix
-				if (logCounter < 5) {
-					GLfloat projMat[16];
-					glGetFloatv(GL_PROJECTION_MATRIX, projMat);
-					LOG_L(L_INFO, "[VR] Projection matrix: [%.3f %.3f %.3f %.3f]", projMat[0], projMat[5], projMat[10], projMat[14]);
-				}
 
 				// Setup projection with VR frustum
 				glMatrixMode(GL_PROJECTION);
 				glLoadIdentity();
 				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
+				CheckGLError("glFrustum");
 				
+				// Setup modelview with HMD tracking
 				glMatrixMode(GL_MODELVIEW);
 				glLoadIdentity();
 				
-				glEnable(GL_DEPTH_TEST);
-				glDepthMask(GL_TRUE);
-				glDisable(GL_CULL_FACE);
-				
 				// Create view matrix from HMD tracking
-				// Apply inverse of eye's relative rotation (for stereo offset)
 				CQuaternion eyeRot = eye.relativeOrientation;
 				eyeRot.Normalize();
 				CMatrix44f viewMatrix = eyeRot.Inverse().ToRotMatrix();
-				
-				// Apply inverse of eye offset (for stereo IPD)
 				viewMatrix.Translate(-eye.eyeOffsetWorld.x, -eye.eyeOffsetWorld.y, -eye.eyeOffsetWorld.z);
-				
 				glLoadMatrixf(viewMatrix.m);
+				CheckGLError("view matrix");
 				
-				// Draw a spinning cube 2 meters in front of viewer
-				glTranslatef(0.0f, 0.0f, -2000.0f);  // Use map units (1 meter = ~1000 units based on near plane)
-				glScalef(200.0f, 200.0f, 200.0f);
+				// Enable proper 3D rendering state
+				glEnable(GL_DEPTH_TEST);
+				glDepthMask(GL_TRUE);
+				glDepthFunc(GL_LESS);
+				glDisable(GL_CULL_FACE);  // No culling so we can see all faces
+				glDisable(GL_BLEND);
+				CheckGLError("GL state setup");
+				
+				// Draw a stationary cube 2 meters in front of origin
+				glPushMatrix();
+				glTranslatef(0.0f, 0.0f, -2000.0f);
+				glScalef(300.0f, 300.0f, 300.0f);
 				DrawVRTestCube();
+				glPopMatrix();
 				CheckGLError("cube drawing");
 
 				if (logCounter < 5) {
