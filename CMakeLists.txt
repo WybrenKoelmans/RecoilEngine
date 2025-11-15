@@ -297,6 +297,19 @@ endif (RECOIL_DETAILED_TRACY_ZONING)
 #  So req. checks are done in the build target's CMakeLists.txt.
 find_package(SDL2 MODULE)
 
+# OpenXR for VR support
+option(USE_VR "Enable VR support using OpenXR" TRUE)
+if (USE_VR AND WIN32)
+	find_package(OpenXR)
+	if (OpenXR_FOUND)
+		add_definitions(-DUSE_VR)
+		message(STATUS "OpenXR found - VR support enabled")
+	else()
+		message(WARNING "OpenXR not found - VR support disabled. Install OpenXR SDK to enable VR.")
+		set(USE_VR FALSE)
+	endif()
+endif()
+
 find_package_static(DevIL 1.8.0 REQUIRED)
 
 if    (WIN32)

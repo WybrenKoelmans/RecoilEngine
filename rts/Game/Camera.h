@@ -19,7 +19,9 @@ public:
 		CAMTYPE_ENVMAP = 3, // used for cubemap generation
 		CAMTYPE_VISCUL = 4, // used for frustum culling
 		CAMTYPE_ACTIVE = 5, // pointer to currently active camera
-		CAMTYPE_COUNT  = 6,
+		CAMTYPE_VR_LEFT = 6,  // VR left eye camera
+		CAMTYPE_VR_RIGHT = 7, // VR right eye camera
+		CAMTYPE_COUNT  = 8,
 	};
 
 	enum {
@@ -242,6 +244,7 @@ public:
 	void UpdateViewRange();
 	void UpdateFrustum();
 	void UpdateMatrices(uint32_t vsx, uint32_t vsy, float var);
+	void UpdateMatricesVR(const CMatrix44f& viewMat, const CMatrix44f& projMat, uint32_t vsx, uint32_t vsy);
 	void UpdateViewPort(int px, int py, int sx, int sy);
 
 	void ConfigNotify(const std::string& key, const std::string& value);

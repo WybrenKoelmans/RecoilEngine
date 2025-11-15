@@ -269,6 +269,24 @@ void CCamera::UpdateMatrices(uint32_t vsx, uint32_t vsy, float var)
 	billboardMatrix.Transpose(); // viewMatrix is affine, equals inverse
 }
 
+void CCamera::UpdateMatricesVR(const CMatrix44f& viewMat, const CMatrix44f& projMat, uint32_t vsx, uint32_t vsy)
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	// Use VR-provided matrices directly
+	viewMatrix = viewMat;
+	projectionMatrix = projMat;
+	
+	// Create extra matrices
+	viewProjectionMatrix = projectionMatrix * viewMatrix;
+	viewMatrixInverse = viewMatrix.InvertAffine();
+	projectionMatrixInverse = projectionMatrix.Invert();
+	viewProjectionMatrixInverse = viewProjectionMatrix.Invert();
+	
+	billboardMatrix = viewMatrix;
+	billboardMatrix.SetPos(ZeroVector);
+	billboardMatrix.Transpose();
+}
+
 void CCamera::UpdateViewPort(int px, int py, int sx, int sy)
 {
 	RECOIL_DETAILED_TRACY_ZONE;

@@ -9,6 +9,7 @@
 #include "GlobalRendering.h"
 #include "GlobalRenderingInfo.h"
 #include "Rendering/VerticalSync.h"
+#include "Rendering/VR/VRSystem.h"
 #include "Rendering/GL/StreamBuffer.h"
 #include "Rendering/GL/RenderBuffers.h"
 #include "Rendering/GL/myGL.h"
@@ -605,6 +606,21 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 
 	MakeCurrentContext(false);
 	SDL_DisableScreenSaver();
+	
+#ifdef USE_VR
+	// Initialize VR system after OpenGL context is ready
+	if (!g_VRSystem) {
+		g_VRSystem = new CVRSystem();
+		if (g_VRSystem->Initialize()) {
+			LOG_L(L_INFO, "[VR] VR system initialized successfully");
+		} else {
+			LOG_L(L_WARNING, "[VR] VR system initialization failed, continuing without VR");
+			delete g_VRSystem;
+			g_VRSystem = nullptr;
+		}
+	}
+#endif
+	
 	return true;
 }
 
@@ -617,6 +633,15 @@ void CGlobalRendering::MakeCurrentContext(bool clear) const {
 void CGlobalRendering::DestroyWindowAndContext() {
 	if (!sdlWindow)
 		return;
+
+#ifdef USE_VR
+	// Shutdown VR system before destroying OpenGL context
+	if (g_VRSystem) {
+		g_VRSystem->Shutdown();
+		delete g_VRSystem;
+		g_VRSystem = nullptr;
+	}
+#endif
 
 	WindowManagerHelper::SetIconSurface(sdlWindow, nullptr);
 	SetWindowInputGrabbing(false);

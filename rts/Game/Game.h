@@ -14,6 +14,9 @@
 #include "System/UnorderedMap.hpp"
 #include "System/creg/creg_cond.h"
 #include "System/Misc/SpringTime.h"
+#include "System/Threading/SpringThreading.h"
+
+struct S3DModel;
 
 class LuaParser;
 class ILoadSaveHandler;
@@ -227,6 +230,8 @@ private:
 
 	std::atomic<bool> loadDone = {false};
 	std::atomic<bool> gameOver = {false};
+
+	S3DModel* vrDebugModel = nullptr;
 };
 
 

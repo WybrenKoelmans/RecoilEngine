@@ -2,6 +2,7 @@
 
 #include "Rendering/GL/myGL.h"
 
+#include <algorithm>
 #include <Rml/Backends/RmlUi_Backend.h>
 #include <RmlUi/Core.h>
 #include "Game.h"
@@ -33,6 +34,7 @@
 #include "ExternalAI/EngineOutHandler.h"
 #include "ExternalAI/SkirmishAIHandler.h"
 #include "Rendering/WorldDrawer.h"
+#include "Rendering/VR/VRSystem.h"
 #include "Rendering/Env/IWater.h"
 #include "Rendering/Env/WaterRendering.h"
 #include "Rendering/Env/MapRendering.h"
@@ -774,6 +776,12 @@ void CGame::LoadInterface()
 	// interface components
 	cmdColors.LoadConfigFromFile("cmdcolors.txt");
 
+	if (vrDebugModel == nullptr) {
+		const UnitDef* ud = unitDefHandler->GetUnitDefByName("armasp");
+		if (ud)
+			vrDebugModel = ud->LoadModel();
+	}
+
 	keyBindings.Init();
 	keyBindings.LoadDefaults();
 	keyBindings.Load();
@@ -1495,6 +1503,141 @@ bool CGame::Draw() {
 
 	//FIXME move both to UpdateUnsynced?
 	CTeamHighlight::Enable(spring_tomsecs(currentTimePreDraw));
+
+#ifdef USE_VR
+	// VR rendering path - completely separate from desktop rendering
+	if (g_VRSystem && g_VRSystem->IsActive() && g_VRSystem->IsSessionRunning()) {
+		// Save camera state before VR rendering
+		float3 savedCamPos = float3(float3::maxxpos * 0.5f, readMap->GetCurrMinHeight() + 50.0f, float3::maxzpos * 0.5f);
+		const float3 savedCamForward = camera->GetDir();
+		const float3 savedCamUp = camera->GetUp();
+		const float3 savedCamRight = camera->GetRight();
+		const CMatrix44f savedViewMatrix = camera->GetViewMatrix();
+		const CMatrix44f savedProjMatrix = camera->GetProjectionMatrix();
+		
+		// Update controller input
+		g_VRSystem->UpdateControllerInput();
+		
+		// Wait for HMD poses
+		g_VRSystem->WaitGetPoses();
+		
+		// Render left eye
+		{
+			g_VRSystem->SetupEyeCamera(CVRSystem::LEFT_EYE);
+			const auto& eyeData = g_VRSystem->GetEyeData(CVRSystem::LEFT_EYE);
+			
+			// Get camera's near/far planes
+			const float nearZ = camera->GetNearPlaneDist();
+			const float farZ = camera->GetFarPlaneDist();
+			
+			// Build custom view matrix: use game position with VR orientation
+			CMatrix44f customViewMatrix;
+			customViewMatrix[0]  = eyeData.right.x;
+			customViewMatrix[1]  = eyeData.up.x;
+			customViewMatrix[2]  = -eyeData.forward.x;
+			customViewMatrix[3]  = 0.0f;
+			customViewMatrix[4]  = eyeData.right.y;
+			customViewMatrix[5]  = eyeData.up.y;
+			customViewMatrix[6]  = -eyeData.forward.y;
+			customViewMatrix[7]  = 0.0f;
+			customViewMatrix[8]  = eyeData.right.z;
+			customViewMatrix[9]  = eyeData.up.z;
+			customViewMatrix[10] = -eyeData.forward.z;
+			customViewMatrix[11] = 0.0f;
+			customViewMatrix[12] = -savedCamPos.dot(eyeData.right);
+			customViewMatrix[13] = -savedCamPos.dot(eyeData.up);
+			customViewMatrix[14] = savedCamPos.dot(eyeData.forward);
+			customViewMatrix[15] = 1.0f;
+			
+			// Rebuild projection matrix with camera's near/far planes
+			CMatrix44f customProjMatrix = eyeData.projectionMatrix;
+			customProjMatrix[10] = -(farZ + nearZ) / (farZ - nearZ);
+			customProjMatrix[14] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
+			
+			// Set camera orientation from VR
+			camera->forward = eyeData.forward;
+			camera->up = eyeData.up;
+			camera->right = eyeData.right;
+			
+			// Update camera with custom matrices
+			camera->UpdateMatricesVR(customViewMatrix, customProjMatrix, eyeData.width, eyeData.height);
+			camera->UpdateViewPort(0, 0, eyeData.width, eyeData.height);
+			camera->UpdateFrustum();
+			
+			worldDrawer.Draw();
+			g_VRSystem->SubmitEyeTexture(CVRSystem::LEFT_EYE);
+		}
+		
+		// Render right eye
+		{
+			g_VRSystem->SetupEyeCamera(CVRSystem::RIGHT_EYE);
+			const auto& eyeData = g_VRSystem->GetEyeData(CVRSystem::RIGHT_EYE);
+			
+			const float nearZ = camera->GetNearPlaneDist();
+			const float farZ = camera->GetFarPlaneDist();
+			
+			// Build custom view matrix
+			CMatrix44f customViewMatrix;
+			customViewMatrix[0]  = eyeData.right.x;
+			customViewMatrix[1]  = eyeData.up.x;
+			customViewMatrix[2]  = -eyeData.forward.x;
+			customViewMatrix[3]  = 0.0f;
+			customViewMatrix[4]  = eyeData.right.y;
+			customViewMatrix[5]  = eyeData.up.y;
+			customViewMatrix[6]  = -eyeData.forward.y;
+			customViewMatrix[7]  = 0.0f;
+			customViewMatrix[8]  = eyeData.right.z;
+			customViewMatrix[9]  = eyeData.up.z;
+			customViewMatrix[10] = -eyeData.forward.z;
+			customViewMatrix[11] = 0.0f;
+			customViewMatrix[12] = -savedCamPos.dot(eyeData.right);
+			customViewMatrix[13] = -savedCamPos.dot(eyeData.up);
+			customViewMatrix[14] = savedCamPos.dot(eyeData.forward);
+			customViewMatrix[15] = 1.0f;
+			
+			CMatrix44f customProjMatrix = eyeData.projectionMatrix;
+			customProjMatrix[10] = -(farZ + nearZ) / (farZ - nearZ);
+			customProjMatrix[14] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
+			
+			camera->forward = eyeData.forward;
+			camera->up = eyeData.up;
+			camera->right = eyeData.right;
+			
+			camera->UpdateMatricesVR(customViewMatrix, customProjMatrix, eyeData.width, eyeData.height);
+			camera->UpdateViewPort(0, 0, eyeData.width, eyeData.height);
+			camera->UpdateFrustum();
+			
+			worldDrawer.Draw();
+			g_VRSystem->SubmitEyeTexture(CVRSystem::RIGHT_EYE);
+		}
+		
+		// Present to HMD
+		g_VRSystem->Present();
+		
+		// CRITICAL: Restore camera state completely for desktop rendering
+		camera->SetPos(savedCamPos);
+		camera->forward = savedCamForward;
+		camera->up = savedCamUp;
+		camera->right = savedCamRight;
+		
+		// Restore the original camera matrices by forcing a full camera update
+		camera->Update(true, true, true, true);
+		
+		// Unbind VR framebuffer and restore desktop viewport
+		if (FBO::IsSupported())
+			FBO::Unbind();
+		camera->LoadViewport();
+		
+		worldDrawer.ResetMVPMatrices();
+		
+		// DEBUG: Skip desktop rendering to isolate VR rendering issues
+		// Desktop window will show black/skybox only
+		LOG_L(L_WARNING, "[VR] Skipping desktop rendering for VR debugging");
+		return true;
+	}
+	else
+#endif
+	// Standard desktop/monitor rendering - only when VR is NOT active
 	{
 		minimap->Update();
 
@@ -1675,6 +1818,17 @@ void CGame::StartPlaying()
 
 	if (saveFileHandler == nullptr)
 		eventHandler.GameStart();
+	
+#ifdef USE_VR
+	// Start VR session now that the game is loaded into a battle
+	if (g_VRSystem && g_VRSystem->IsInitialized() && !g_VRSystem->IsSessionRunning()) {
+		if (g_VRSystem->StartSession()) {
+			LOG_L(L_INFO, "[VR] VR session started for battle");
+		} else {
+			LOG_L(L_WARNING, "[VR] Failed to start VR session");
+		}
+	}
+#endif
 }
 
 static const char* const tracingSimFrameName = "SimFrame";
