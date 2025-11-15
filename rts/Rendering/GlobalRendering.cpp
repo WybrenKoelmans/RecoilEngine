@@ -12,6 +12,9 @@
 #include "Rendering/GL/StreamBuffer.h"
 #include "Rendering/GL/RenderBuffers.h"
 #include "Rendering/GL/myGL.h"
+#if defined(USE_VR)
+#include "Rendering/VR/VRSystem.h"
+#endif
 #include "Rendering/GL/FBO.h"
 #include "Rendering/GL/glExtra.h"
 #include "Rendering/GL/glxHandler.h"
@@ -690,24 +693,31 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 
 		//https://stackoverflow.com/questions/68480028/supporting-opengl-screen-capture-by-third-party-applications
 		glBindFramebuffer(GL_READ_FRAMEBUFFER_EXT, 0);
-		
-		#ifdef _WIN32
-			using DwmFlushT = HRESULT(WINAPI*)();
-			if (forceDWMFlush == 1){ 
-				ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPre");
-				if (DwmFlush)
-					reinterpret_cast<DwmFlushT>(DwmFlush)();
-			}
-		#endif
-		
-		SDL_GL_SwapWindow(sdlWindow);
+		bool desktopSwapAllowed = true;
+#if defined(USE_VR)
+		if (vr::OpenXRSystem* vrSystem = vr::GetOpenXRSystem(); vrSystem != nullptr && vrSystem->ShouldBlockDesktopSwap()) {
+			desktopSwapAllowed = false;
+		}
+#endif
 
 		#ifdef _WIN32
-			if (forceDWMFlush == 2){ 
-				ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPost");
-				if (DwmFlush)
-					reinterpret_cast<DwmFlushT>(DwmFlush)();
-			}
+		using DwmFlushT = HRESULT(WINAPI*)();
+		if (desktopSwapAllowed && forceDWMFlush == 1){ 
+			ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPre");
+			if (DwmFlush)
+				reinterpret_cast<DwmFlushT>(DwmFlush)();
+		}
+		#endif
+
+		if (desktopSwapAllowed)
+			SDL_GL_SwapWindow(sdlWindow);
+
+		#ifdef _WIN32
+		if (desktopSwapAllowed && forceDWMFlush == 2){ 
+			ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPost");
+			if (DwmFlush)
+				reinterpret_cast<DwmFlushT>(DwmFlush)();
+		}
 		#endif
 
 		FrameMark;

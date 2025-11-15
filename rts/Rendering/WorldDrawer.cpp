@@ -20,7 +20,11 @@
 #include "Rendering/LineDrawer.h"
 #include "Rendering/LuaObjectDrawer.h"
 #include "Rendering/Features/FeatureDrawer.h"
+#if defined(USE_VR)
+#include "Rendering/VR/VRSystem.h"
+#endif
 #include "Rendering/Env/Particles/ProjectileDrawer.h"
+#include <algorithm>
 #include "Rendering/Units/UnitDrawer.h"
 #include "Rendering/IPathDrawer.h"
 #include "Rendering/DepthBufferCopy.h"
@@ -38,6 +42,8 @@
 #include "Map/BaseGroundDrawer.h"
 #include "Map/ReadMap.h"
 #include "Game/Camera.h"
+#include "System/float4.h"
+#include "System/Quaternion.h"
 #include "Game/SelectedUnitsHandler.h"
 #include "Game/Game.h"
 #include "Game/GlobalUnsynced.h"
@@ -295,7 +301,7 @@ void CWorldDrawer::ResetMVPMatrices() const
 
 
 
-void CWorldDrawer::Draw() const
+void CWorldDrawer::DrawEyeScene() const
 {
 	SCOPED_TIMER("Draw::World");
 	SCOPED_GL_DEBUGGROUP("Draw::World");
@@ -308,8 +314,6 @@ void CWorldDrawer::Draw() const
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	camera->Update();
 
 	DrawOpaqueObjects();
 	DrawAlphaObjects();
@@ -326,6 +330,88 @@ void CWorldDrawer::Draw() const
 	glDisable(GL_FOG);
 }
 
+
+void CWorldDrawer::Draw() const
+{
+#if defined(USE_VR)
+	vr::OpenXRSystem* vrSystem = vr::GetOpenXRSystem();
+	const bool vrReady = (vrSystem != nullptr && vrSystem->IsInitialized() && vrSystem->IsSessionRunning());
+
+	if (vrReady && vrSystem->BeginFrame()) {
+		const float3 basePos = camera->GetPos();
+		const float3 baseRot = camera->GetRot();
+		const float baseVFOV = camera->GetVFOV();
+		const float baseNear = camera->GetNearPlaneDist();
+		const float baseFar = camera->GetFarPlaneDist();
+		const int baseViewPosX = globalRendering->viewPosX;
+		const int baseViewPosY = globalRendering->viewPosY;
+		const int baseViewSizeX = globalRendering->viewSizeX;
+		const int baseViewSizeY = globalRendering->viewSizeY;
+		const float baseAspect = globalRendering->aspectRatio;
+		const float basePixelX = globalRendering->pixelX;
+		const float basePixelY = globalRendering->pixelY;
+
+		const CQuaternion baseOrientation = CQuaternion::FromEulerYPR(baseRot);
+		bool renderedStereo = vrSystem->RenderEyes(
+			[&](const vr::EyeRenderTarget& eye) {
+				if (eye.framebuffer == 0 || eye.width <= 0 || eye.height <= 0)
+					return;
+
+				glBindFramebuffer(GL_FRAMEBUFFER, eye.framebuffer);
+
+				globalRendering->viewPosX = 0;
+				globalRendering->viewPosY = 0;
+				globalRendering->viewSizeX = eye.width;
+				globalRendering->viewSizeY = eye.height;
+				const int safeWidth = std::max(eye.width, 1);
+				const int safeHeight = std::max(eye.height, 1);
+				globalRendering->aspectRatio = static_cast<float>(safeWidth) / static_cast<float>(safeHeight);
+				globalRendering->pixelX = 1.0f / static_cast<float>(safeWidth);
+				globalRendering->pixelY = 1.0f / static_cast<float>(safeHeight);
+
+				camera->SetPos(basePos + eye.eyeOffsetWorld);
+
+				CQuaternion finalOrientation = baseOrientation * eye.relativeOrientation;
+				finalOrientation.Normalize();
+				camera->SetRot(finalOrientation.ToEulerYPR());
+
+				camera->UpdateLoadViewport(0, 0, eye.width, eye.height);
+				camera->SetAsymmetricFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
+
+				DrawEyeScene();
+			},
+			*camera
+		);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// restore base rendering state
+		globalRendering->viewPosX = baseViewPosX;
+		globalRendering->viewPosY = baseViewPosY;
+		globalRendering->viewSizeX = baseViewSizeX;
+		globalRendering->viewSizeY = baseViewSizeY;
+		globalRendering->aspectRatio = baseAspect;
+		globalRendering->pixelX = basePixelX;
+		globalRendering->pixelY = basePixelY;
+
+		camera->SetPos(basePos);
+		camera->SetRot(baseRot);
+		camera->SetVFOV(baseVFOV);
+		camera->SetFrustumScales(float4(0.0f, 0.0f, baseNear, baseFar));
+		camera->Update();
+		camera->UpdateLoadViewport(baseViewPosX, baseViewPosY, baseViewSizeX, baseViewSizeY);
+
+		vrSystem->EndFrame();
+
+		if (renderedStereo) {
+			return;
+		}
+	}
+#endif
+
+	camera->Update();
+	DrawEyeScene();
+}
 
 void CWorldDrawer::DrawOpaqueObjects() const
 {

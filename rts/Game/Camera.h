@@ -160,6 +160,7 @@ public:
 
 	void SetClipCtrlMatrix(const CMatrix44f& mat) { clipControlMatrix = mat; }
 	void SetProjMatrix(const CMatrix44f& mat) { projectionMatrix = mat; }
+	void SetAsymmetricFrustum(float left, float right, float bottom, float top, float zNear, float zFar);
 	void SetViewMatrix(const CMatrix44f& mat) {
 		viewMatrix = mat;
 
@@ -311,6 +312,11 @@ private:
 
 	bool movState[10]; // fwd, back, left, right, up, down, fast, slow, tilt, reset
 	bool rotState[4]; // unused
+	bool useAsymmetricFrustum = false;
+	float asymLeft = 0.0f;
+	float asymRight = 0.0f;
+	float asymBottom = 0.0f;
+	float asymTop = 0.0f;
 };
 
 #define camera (CCamera::GetActive())

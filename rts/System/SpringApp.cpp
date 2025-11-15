@@ -73,6 +73,9 @@
 #include "System/TimeProfiler.h"
 #include "System/UriParser.h"
 #include "System/LoadLock.h"
+#if defined(USE_VR)
+#include "Rendering/VR/VRSystem.h"
+#endif
 #include "System/Config/ConfigHandler.h"
 #include "System/creg/creg_runtime_tests.h"
 #include "System/FileSystem/ArchiveScanner.h"
@@ -113,6 +116,9 @@ CONFIG(bool, FontConfigSearchAttributes).defaultValue(true).description("Whether
 CONFIG(bool, FontConfigApplySubstitutions).defaultValue(true).description("[EXPERIMENTAL] In case it's disabled FcConfigSubstitute is not getting called, this might break non-ASCII font rendering.");
 CONFIG(int, MaxFontTries).defaultValue(5).description("Represents the maximum number of attempts to search for a glyph replacement using the FontConfig library (lower = foreign glyphs may fail to render, higher = searching for foreign glyphs can lag the game).");
 CONFIG(int, MaxPinnedFonts).defaultValue(10).description("Maximum number of fonts to pin to cache. Increasing this will eventually use more memory, but can alleviate processing spikes when rendering new glyphs.");
+#if defined(USE_VR)
+CONFIG(bool, EnableVR).defaultValue(true).description("Enable OpenXR VR rendering when available.");
+#endif
 
 CONFIG(std::string, name).defaultValue(UnnamedPlayerName).description("Sets your name in the game. Since this is overridden by lobbies with your lobby username when playing, it usually only comes up when viewing replays or starting the engine directly for testing purposes.");
 CONFIG(std::string, DefaultStartScript).defaultValue("").description("filename of script.txt to use when no command line parameters are specified.");
@@ -265,6 +271,16 @@ bool SpringApp::Init()
 	globalRendering->UpdateGLConfigs();
 	globalRendering->UpdateGLGeometry();
 	globalRendering->InitGLState();
+
+#if defined(USE_VR)
+	if (configHandler->GetBool("EnableVR")) {
+		if (!vr::EnsureOpenXRSystem(*globalRendering)) {
+			LOG_L(L_WARNING, "[SpringApp::Init] OpenXR initialization failed; continuing without VR");
+		}
+	} else {
+		LOG_L(L_INFO, "[SpringApp::Init] EnableVR is false; skipping OpenXR initialization");
+	}
+#endif
 
 	CCameraHandler::InitStatic();
 	CBitmap::InitPool(configHandler->GetInt("TextureMemPoolSize"));
@@ -871,6 +887,13 @@ bool SpringApp::Update()
 	configHandler->Update();
 	globalRendering->UpdateWindow();
 	globalRendering->UpdateTimer();
+
+#if defined(USE_VR)
+	if (vr::OpenXRSystem* vrSystem = vr::GetOpenXRSystem(); vrSystem != nullptr && vrSystem->IsInitialized()) {
+		vrSystem->PollEvents();
+		vrSystem->SetGameActive(activeController == game);
+	}
+#endif
 
 	#if 0
 	if (activeController == nullptr)

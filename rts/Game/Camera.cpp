@@ -169,6 +169,62 @@ void CCamera::UpdateFrustum()
 	float2 fAxisScales;
 
 	assert(projType <= PROJTYPE_ORTHO);
+	if (useAsymmetricFrustum && projType == PROJTYPE_PERSP) {
+		const float n = frustum.scales.z;
+		const float f = frustum.scales.w;
+		const float nfRatio = (n > 0.0f) ? (f / n) : 1.0f;
+
+		const float3 nearCenter = pos + forward * n;
+		const float3 farCenter = pos + forward * f;
+
+		const float3 nearRightVec = right * asymRight;
+		const float3 nearLeftVec = right * asymLeft;
+		const float3 nearTopVec = up * asymTop;
+		const float3 nearBottomVec = up * asymBottom;
+
+		const float3 farRightVec = right * (asymRight * nfRatio);
+		const float3 farLeftVec = right * (asymLeft * nfRatio);
+		const float3 farTopVec = up * (asymTop * nfRatio);
+		const float3 farBottomVec = up * (asymBottom * nfRatio);
+
+		frustum.verts[FRUSTUM_POINT_NBL] = nearCenter + nearLeftVec + nearBottomVec;
+		frustum.verts[FRUSTUM_POINT_NBR] = nearCenter + nearRightVec + nearBottomVec;
+		frustum.verts[FRUSTUM_POINT_NTR] = nearCenter + nearRightVec + nearTopVec;
+		frustum.verts[FRUSTUM_POINT_NTL] = nearCenter + nearLeftVec + nearTopVec;
+		frustum.verts[FRUSTUM_POINT_FBL] = farCenter + farLeftVec + farBottomVec;
+		frustum.verts[FRUSTUM_POINT_FBR] = farCenter + farRightVec + farBottomVec;
+		frustum.verts[FRUSTUM_POINT_FTR] = farCenter + farRightVec + farTopVec;
+		frustum.verts[FRUSTUM_POINT_FTL] = farCenter + farLeftVec + farTopVec;
+
+		const auto SetFrustumPlane = [this](uint32_t i, uint32_t v1i, uint32_t v2i, uint32_t v3i) {
+			const auto& v1 = frustum.verts[v1i];
+			const auto& v2 = frustum.verts[v2i];
+			const auto& v3 = frustum.verts[v3i];
+
+			const float3 u = v1 - v2;
+			const float3 v = v3 - v2;
+
+			const float3 nrm = v.cross(u).UnsafeANormalize();
+			const float d = -nrm.dot(v2);
+			frustum.planes[i] = float4(nrm, d);
+		};
+
+		SetFrustumPlane(FRUSTUM_PLANE_LFT, FRUSTUM_POINT_NTL, FRUSTUM_POINT_NBL, FRUSTUM_POINT_FBL);
+		SetFrustumPlane(FRUSTUM_PLANE_RGT, FRUSTUM_POINT_NBR, FRUSTUM_POINT_NTR, FRUSTUM_POINT_FBR);
+		SetFrustumPlane(FRUSTUM_PLANE_BOT, FRUSTUM_POINT_NBL, FRUSTUM_POINT_NBR, FRUSTUM_POINT_FBR);
+		SetFrustumPlane(FRUSTUM_PLANE_TOP, FRUSTUM_POINT_NTR, FRUSTUM_POINT_NTL, FRUSTUM_POINT_FTL);
+		SetFrustumPlane(FRUSTUM_PLANE_NEA, FRUSTUM_POINT_NTL, FRUSTUM_POINT_NTR, FRUSTUM_POINT_NBR);
+		SetFrustumPlane(FRUSTUM_PLANE_FAR, FRUSTUM_POINT_FTR, FRUSTUM_POINT_FTL, FRUSTUM_POINT_FBL);
+
+		frustum.edges[FRUSTUM_EDGE_NTR_NTL] = (frustum.verts[FRUSTUM_POINT_NTR] - frustum.verts[FRUSTUM_POINT_NTL]).UnsafeANormalize();
+		frustum.edges[FRUSTUM_EDGE_NTL_NBL] = (frustum.verts[FRUSTUM_POINT_NTL] - frustum.verts[FRUSTUM_POINT_NBL]).UnsafeANormalize();
+		frustum.edges[FRUSTUM_EDGE_FTL_NTL] = (frustum.verts[FRUSTUM_POINT_FTL] - frustum.verts[FRUSTUM_POINT_NTL]).UnsafeANormalize();
+		frustum.edges[FRUSTUM_EDGE_FTR_NTR] = (frustum.verts[FRUSTUM_POINT_FTR] - frustum.verts[FRUSTUM_POINT_NTR]).UnsafeANormalize();
+		frustum.edges[FRUSTUM_EDGE_FBR_NBR] = (frustum.verts[FRUSTUM_POINT_FBR] - frustum.verts[FRUSTUM_POINT_NBR]).UnsafeANormalize();
+		frustum.edges[FRUSTUM_EDGE_FBL_NBL] = (frustum.verts[FRUSTUM_POINT_FBL] - frustum.verts[FRUSTUM_POINT_NBL]).UnsafeANormalize();
+		return;
+	}
+
 	if (projType == PROJTYPE_PERSP) {
 		const float2 tanHalfFOVs = {math::tan(GetHFOV() * 0.5f * math::DEG_TO_RAD), tanHalfFov}; // horz, vert
 		nAxisScales = {frustum.scales.z * tanHalfFOVs.x, frustum.scales.z * tanHalfFOVs.y}; // x, y
@@ -483,6 +539,7 @@ void CCamera::SetVFOV(const float angle)
 	fov = angle;
 	halfFov = (fov * 0.5f) * math::DEG_TO_RAD;
 	tanHalfFov = math::tan(halfFov);
+	useAsymmetricFrustum = false;
 }
 
 float CCamera::GetHFOV() const {
@@ -590,6 +647,49 @@ float3 CCamera::CalcViewPortCoordinates(const float3& objPos) const
 	vpPos.y = viewport[3] * (clipPos.y + 1.0f) * 0.5f;
 	vpPos.z =               (clipPos.z + 1.0f) * 0.5f;
 	return vpPos;
+}
+
+
+void CCamera::SetAsymmetricFrustum(float left, float right, float bottom, float top, float zn, float zf)
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	useAsymmetricFrustum = true;
+	asymLeft = left;
+	asymRight = right;
+	asymBottom = bottom;
+	asymTop = top;
+
+	frustum.scales.z = zn;
+	frustum.scales.w = zf;
+
+	const float invZn = 1.0f / std::max(zn, 0.0001f);
+	const float tanHalfVert = std::max(std::fabs(top), std::fabs(bottom)) * invZn;
+	const float tanHalfHoriz = std::max(std::fabs(right), std::fabs(left)) * invZn;
+
+	tanHalfFov = tanHalfVert;
+	halfFov = std::atan(tanHalfVert);
+	fov = halfFov * 2.0f * math::RAD_TO_DEG;
+	aspectRatio = (top != bottom) ? ((right - left) / (top - bottom)) : aspectRatio;
+	lppScale = (2.0f * tanHalfFov) * globalRendering->pixelY;
+
+	projectionMatrix = clipControlMatrix * CMatrix44f::PerspProj(left, right, bottom, top, zn, zf);
+
+	const float3 fShake = ((forward * (1.0f + tiltOffset.z)) + (right * tiltOffset.x) + (up * tiltOffset.y)).ANormalize();
+	const float3 camPos = pos + posOffset;
+	const float3 center = camPos + fShake;
+
+	viewMatrix = CMatrix44f::LookAtView(camPos, center, up);
+
+	viewProjectionMatrix = projectionMatrix * viewMatrix;
+	viewMatrixInverse = viewMatrix.InvertAffine();
+	projectionMatrixInverse = projectionMatrix.Invert();
+	viewProjectionMatrixInverse = viewProjectionMatrix.Invert();
+
+	billboardMatrix = viewMatrix;
+	billboardMatrix.SetPos(ZeroVector);
+	billboardMatrix.Transpose();
+
+	UpdateFrustum();
 }
 
 

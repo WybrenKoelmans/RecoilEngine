@@ -21,6 +21,7 @@ private:
 	void DrawAlphaObjects() const;
 	void DrawMiscObjects() const;
 	void DrawBelowWaterOverlay() const;
+	void DrawEyeScene() const;
 
 private:
 	unsigned int numUpdates = 0;
