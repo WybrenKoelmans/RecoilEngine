@@ -762,7 +762,7 @@ void CGame::PostLoadRendering() {
 	// Initialize VR rendering if enabled
 	if (globalRendering->vrEnabled) {
 		LOG_L(L_INFO, "[VR] Initializing VR rendering system...");
-		vrRenderer = std::make_unique<CVRRenderer>();
+		vrRenderer = std::make_unique<CVRRenderer>(&worldDrawer);
 		
 		if (!vrRenderer->Initialize()) {
 			LOG_L(L_FATAL, "[VR] Failed to initialize VR renderer - cannot start in VR mode");

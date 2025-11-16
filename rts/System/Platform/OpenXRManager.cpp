@@ -13,9 +13,11 @@
 #ifdef _WIN32
 	#include <windows.h>
 	#include <GL/gl.h>
+	#include <GL/glext.h>
 #else
 	#include <GL/glx.h>
 	#include <X11/Xlib.h>
+	#include <GL/glext.h>
 #endif
 
 #define XR_CHECK(call, msg) \
@@ -90,6 +92,15 @@ void COpenXRManager::Shutdown()
 	
 	LOG_L(L_INFO, "[VR] Shutting down OpenXR...");
 	
+	// End session if still running
+	if (sessionRunning && session != XR_NULL_HANDLE) {
+		XrResult result = xrEndSession(session);
+		if (XR_SUCCEEDED(result)) {
+			LOG_L(L_INFO, "[VR] Session ended during shutdown");
+		}
+		sessionRunning = false;
+	}
+	
 	DestroySwapchains();
 	
 	if (localSpace != XR_NULL_HANDLE) {
@@ -149,8 +160,10 @@ bool COpenXRManager::CreateInstance()
 	createInfo.applicationInfo.applicationVersion = 1;
 	strcpy(createInfo.applicationInfo.engineName, "RecoilEngine");
 	createInfo.applicationInfo.engineVersion = 1;
-	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+	// Use OpenXR API 1.0 for SteamVR compatibility (XR_MAKE_VERSION(1, 0, 0))
+	createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	
+	LOG_L(L_INFO, "[VR] Requesting OpenXR API version 1.0.0");
 	XR_CHECK(xrCreateInstance(&createInfo, &instance), "xrCreateInstance");
 	
 	return true;
@@ -219,17 +232,23 @@ bool COpenXRManager::CreateSession()
 	XR_CHECK(pfnGetOpenGLGraphicsRequirementsKHR(instance, systemId, &graphicsReqs),
 		"xrGetOpenGLGraphicsRequirementsKHR");
 	
-	LOG_L(L_INFO, "[VR] OpenGL version required: %llu.%llu - %llu.%llu",
-		XR_VERSION_MAJOR(graphicsReqs.minApiVersionSupported),
-		XR_VERSION_MINOR(graphicsReqs.minApiVersionSupported),
-		XR_VERSION_MAJOR(graphicsReqs.maxApiVersionSupported),
-		XR_VERSION_MINOR(graphicsReqs.maxApiVersionSupported));
+	LOG_L(L_INFO, "[VR] OpenGL version required: %d.%d - %d.%d",
+		(int)XR_VERSION_MAJOR(graphicsReqs.minApiVersionSupported),
+		(int)XR_VERSION_MINOR(graphicsReqs.minApiVersionSupported),
+		(int)XR_VERSION_MAJOR(graphicsReqs.maxApiVersionSupported),
+		(int)XR_VERSION_MINOR(graphicsReqs.maxApiVersionSupported));
 	
 	// Create session with OpenGL binding (platform-specific)
 #ifdef _WIN32
 	XrGraphicsBindingOpenGLWin32KHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR};
 	graphicsBinding.hDC = wglGetCurrentDC();
 	graphicsBinding.hGLRC = wglGetCurrentContext();
+	
+	if (graphicsBinding.hDC == nullptr || graphicsBinding.hGLRC == nullptr) {
+		LOG_L(L_ERROR, "[VR] Unable to get current OpenGL context (hDC=%p, hGLRC=%p)", 
+			graphicsBinding.hDC, graphicsBinding.hGLRC);
+		return false;
+	}
 #else
 	// Linux/X11
 	XrGraphicsBindingOpenGLXlibKHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR};
@@ -238,6 +257,11 @@ bool COpenXRManager::CreateSession()
 	graphicsBinding.glxDrawable = glXGetCurrentDrawable();
 	graphicsBinding.visualid = 0; // not needed for existing context
 	graphicsBinding.glxFBConfig = 0; // not needed for existing context
+	
+	if (graphicsBinding.xDisplay == nullptr || graphicsBinding.glxContext == nullptr) {
+		LOG_L(L_ERROR, "[VR] Unable to get current OpenGL context");
+		return false;
+	}
 #endif
 	
 	XrSessionCreateInfo sessionInfo{XR_TYPE_SESSION_CREATE_INFO};
@@ -246,14 +270,90 @@ bool COpenXRManager::CreateSession()
 	
 	XR_CHECK(xrCreateSession(instance, &sessionInfo, &session), "xrCreateSession");
 	
-	// Begin session
-	XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
-	beginInfo.primaryViewConfigurationType = viewConfigType;
+	// NOTE: Do NOT call xrBeginSession here!
+	// The session must wait for XR_SESSION_STATE_READY event before beginning.
+	// This will be handled by PollEvents() which must be called every frame.
 	
-	XR_CHECK(xrBeginSession(session, &beginInfo), "xrBeginSession");
-	
-	sessionRunning = true;
+	LOG_L(L_INFO, "[VR] Session created, waiting for READY state before beginning...");
 	return true;
+}
+
+void COpenXRManager::PollEvents()
+{
+	if (instance == XR_NULL_HANDLE)
+		return;
+	
+	XrEventDataBuffer eventBuffer{XR_TYPE_EVENT_DATA_BUFFER};
+	
+	while (xrPollEvent(instance, &eventBuffer) == XR_SUCCESS) {
+		switch (eventBuffer.type) {
+			case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+				auto& stateChanged = *reinterpret_cast<XrEventDataSessionStateChanged*>(&eventBuffer);
+				
+				const char* stateStr = "UNKNOWN";
+				switch (stateChanged.state) {
+					case XR_SESSION_STATE_IDLE: stateStr = "IDLE"; break;
+					case XR_SESSION_STATE_READY: stateStr = "READY"; break;
+					case XR_SESSION_STATE_SYNCHRONIZED: stateStr = "SYNCHRONIZED"; break;
+					case XR_SESSION_STATE_VISIBLE: stateStr = "VISIBLE"; break;
+					case XR_SESSION_STATE_FOCUSED: stateStr = "FOCUSED"; break;
+					case XR_SESSION_STATE_STOPPING: stateStr = "STOPPING"; break;
+					case XR_SESSION_STATE_LOSS_PENDING: stateStr = "LOSS_PENDING"; break;
+					case XR_SESSION_STATE_EXITING: stateStr = "EXITING"; break;
+				}
+				LOG_L(L_INFO, "[VR] Session state changed to: %s", stateStr);
+				
+				if (stateChanged.state == XR_SESSION_STATE_READY) {
+					// Now we can begin the session
+					XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
+					beginInfo.primaryViewConfigurationType = viewConfigType;
+					
+					XrResult result = xrBeginSession(session, &beginInfo);
+					if (XR_SUCCEEDED(result)) {
+						sessionRunning = true;
+						LOG_L(L_INFO, "[VR] Session successfully started");
+					} else {
+						LOG_L(L_ERROR, "[VR] xrBeginSession failed with error %d", result);
+					}
+				}
+				else if (stateChanged.state == XR_SESSION_STATE_STOPPING) {
+					if (sessionRunning) {
+						XrResult result = xrEndSession(session);
+						if (XR_SUCCEEDED(result)) {
+							sessionRunning = false;
+							LOG_L(L_INFO, "[VR] Session stopped");
+						} else {
+							LOG_L(L_ERROR, "[VR] xrEndSession failed with error %d", result);
+						}
+					}
+				}
+				else if (stateChanged.state == XR_SESSION_STATE_EXITING || 
+				         stateChanged.state == XR_SESSION_STATE_LOSS_PENDING) {
+					sessionRunning = false;
+					LOG_L(L_WARNING, "[VR] Session exiting or loss pending");
+				}
+				
+				break;
+			}
+			
+			case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+				LOG_L(L_DEBUG, "[VR] Reference space change pending");
+				break;
+			}
+			
+			case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+				LOG_L(L_ERROR, "[VR] Instance loss pending - VR runtime shutting down");
+				break;
+			}
+			
+			default:
+				LOG_L(L_DEBUG, "[VR] Unhandled event type %u", eventBuffer.type);
+				break;
+		}
+		
+		// Reset for next event
+		eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
+	}
 }
 
 bool COpenXRManager::CreateReferenceSpace()
@@ -274,12 +374,43 @@ bool COpenXRManager::CreateSwapchains()
 {
 	LOG_L(L_DEBUG, "[VR] Creating swapchains...");
 	
+	// Query supported swapchain formats
+	uint32_t formatCount = 0;
+	XR_CHECK(xrEnumerateSwapchainFormats(session, 0, &formatCount, nullptr),
+		"xrEnumerateSwapchainFormats (count)");
+	
+	std::vector<int64_t> formats(formatCount);
+	XR_CHECK(xrEnumerateSwapchainFormats(session, formatCount, &formatCount, formats.data()),
+		"xrEnumerateSwapchainFormats (data)");
+	
+	// Select the best supported format (prefer SRGB for gamma-correct rendering)
+	int64_t selectedFormat = 0;
+	for (int64_t format : formats) {
+		LOG_L(L_DEBUG, "[VR] Available swapchain format: 0x%llX", format);
+		if (format == GL_SRGB8_ALPHA8 || format == GL_RGBA8) {
+			selectedFormat = format;
+			LOG_L(L_INFO, "[VR] Selected swapchain format: 0x%llX", format);
+			break;
+		}
+	}
+	
+	// Fallback to first available format if our preferred ones aren't available
+	if (selectedFormat == 0 && !formats.empty()) {
+		selectedFormat = formats[0];
+		LOG_L(L_WARNING, "[VR] Using fallback swapchain format: 0x%llX", selectedFormat);
+	}
+	
+	if (selectedFormat == 0) {
+		LOG_L(L_ERROR, "[VR] No suitable swapchain format found");
+		return false;
+	}
+	
 	for (int eye = 0; eye < 2; ++eye) {
 		const auto& viewConfig = viewConfigs[eye];
 		
 		XrSwapchainCreateInfo swapchainInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
 		swapchainInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-		swapchainInfo.format = GL_RGBA8;
+		swapchainInfo.format = selectedFormat;
 		swapchainInfo.sampleCount = 1;
 		swapchainInfo.width = viewConfig.recommendedImageRectWidth;
 		swapchainInfo.height = viewConfig.recommendedImageRectHeight;
@@ -323,8 +454,14 @@ void COpenXRManager::DestroySwapchains()
 
 bool COpenXRManager::BeginFrame()
 {
-	if (!sessionRunning)
+	if (!sessionRunning) {
+		// Session not started yet - PollEvents will handle starting it when runtime is ready
+		static int logThrottle = 0;
+		if (logThrottle++ % 120 == 0) {
+			LOG_L(L_DEBUG, "[VR] Session not running yet, waiting for READY event from runtime...");
+		}
 		return false;
+	}
 	
 	// Wait for next frame
 	XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
@@ -339,16 +476,35 @@ bool COpenXRManager::BeginFrame()
 	
 	shouldRender = frameState.shouldRender;
 	
-	if (!shouldRender)
-		return false;
+	// CRITICAL: We must continue the frame loop even when shouldRender is false
+	// This allows OpenXR runtime to progress from SYNCHRONIZED -> VISIBLE -> FOCUSED
+	// We still need to call xrEndFrame() even if we don't render anything
 	
-	// Locate views (get HMD pose and per-eye transforms)
-	if (!LocateViews())
-		return false;
+	// IMPORTANT: Always locate views, even when not rendering!
+	// The runtime needs to see us calling xrLocateViews to know we're ready for rendering.
+	// This is crucial for transitioning from SYNCHRONIZED -> VISIBLE.
+	if (!LocateViews()) {
+		// If view location fails, we definitely can't render
+		shouldRender = false;
+		LOG_L(L_WARNING, "[VR] LocateViews failed, cannot render this frame");
+	} else {
+		UpdateHMDTransform();
+		
+		if (shouldRender) {
+			LOG_L(L_INFO, "[VR] Rendering this frame (shouldRender=true, likely in VISIBLE/FOCUSED state)");
+		} else {
+			// Throttle logging to avoid spam (log once per second at 60fps)
+			static int throttle = 0;
+			if (++throttle >= 60) {
+				LOG_L(L_WARNING, "[VR] Not rendering (shouldRender=false). Session likely in SYNCHRONIZED state. Check if app window has focus or if another VR app is running.");
+				throttle = 0;
+			}
+		}
+	}
 	
-	UpdateHMDTransform();
-	
-	return true;
+	// Return shouldRender to let caller know if they should render content
+	// Caller must still call EndFrame() regardless of this return value
+	return shouldRender;
 }
 
 bool COpenXRManager::LocateViews()
@@ -372,15 +528,11 @@ bool COpenXRManager::LocateViews()
 		auto& data = eyeRenderData[eye];
 		const auto& view = views[eye];
 		
-		// Convert view matrix
-		XrMatrix4x4f xrViewMat;
-		XrMatrix4x4f_CreateViewMatrix(&xrViewMat, &view.pose, &XrVector3f{0, 0, -1});
-		ConvertXrMatrix(xrViewMat, data.viewMatrix);
+		// Create view matrix from pose
+		CreateViewMatrixFromPose(view.pose, data.viewMatrix);
 		
-		// Convert projection matrix
-		XrMatrix4x4f xrProjMat;
-		XrMatrix4x4f_CreateProjectionFov(&xrProjMat, GRAPHICS_OPENGL, view.fov, 0.1f, 1000.0f);
-		ConvertXrMatrix(xrProjMat, data.projectionMatrix);
+		// Create projection matrix from FOV
+		CreateProjectionMatrixFromFov(view.fov, 0.1f, 1000.0f, data.projectionMatrix);
 		
 		// Extract position and orientation
 		ConvertXrPose(view.pose, data.position, data.orientation);
@@ -465,40 +617,50 @@ void COpenXRManager::ReleaseSwapchainImage(int eyeIndex)
 
 void COpenXRManager::EndFrame()
 {
-	std::vector<XrCompositionLayerProjectionView> projectionViews(2);
-	
-	for (int eye = 0; eye < 2; ++eye) {
-		projectionViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-		projectionViews[eye].next = nullptr;
-		projectionViews[eye].pose = views[eye].pose;
-		projectionViews[eye].fov = views[eye].fov;
-		projectionViews[eye].subImage.swapchain = swapchains[eye].swapchain;
-		projectionViews[eye].subImage.imageRect.offset = {0, 0};
-		projectionViews[eye].subImage.imageRect.extent = {
-			static_cast<int32_t>(swapchains[eye].width),
-			static_cast<int32_t>(swapchains[eye].height)
-		};
-		projectionViews[eye].subImage.imageArrayIndex = 0;
-	}
-	
-	XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-	layer.space = localSpace;
-	layer.viewCount = 2;
-	layer.views = projectionViews.data();
-	
-	const XrCompositionLayerBaseHeader* layers[] = {
-		reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer)
-	};
-	
 	XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
 	endInfo.displayTime = frameState.predictedDisplayTime;
 	endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-	endInfo.layerCount = shouldRender ? 1 : 0;
-	endInfo.layers = shouldRender ? layers : nullptr;
+	
+	// If we should render, submit layers. Otherwise submit empty frame.
+	if (shouldRender) {
+		std::vector<XrCompositionLayerProjectionView> projectionViews(2);
+		
+		for (int eye = 0; eye < 2; ++eye) {
+			projectionViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+			projectionViews[eye].next = nullptr;
+			projectionViews[eye].pose = views[eye].pose;
+			projectionViews[eye].fov = views[eye].fov;
+			projectionViews[eye].subImage.swapchain = swapchains[eye].swapchain;
+			projectionViews[eye].subImage.imageRect.offset = {0, 0};
+			projectionViews[eye].subImage.imageRect.extent = {
+				static_cast<int32_t>(swapchains[eye].width),
+				static_cast<int32_t>(swapchains[eye].height)
+			};
+			projectionViews[eye].subImage.imageArrayIndex = 0;
+		}
+		
+		XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+		layer.space = localSpace;
+		layer.viewCount = 2;
+		layer.views = projectionViews.data();
+		
+		const XrCompositionLayerBaseHeader* layers[] = {
+			reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer)
+		};
+		
+		endInfo.layerCount = 1;
+		endInfo.layers = layers;
+		
+		LOG_L(L_DEBUG, "[VR] Submitting frame with rendered layers");
+	} else {
+		// Submit empty frame to keep runtime happy during state transitions
+		endInfo.layerCount = 0;
+		endInfo.layers = nullptr;
+		
+		LOG_L(L_DEBUG, "[VR] Submitting empty frame (not rendering)");
+	}
 	
 	XR_CHECK_VOID(xrEndFrame(session, &endInfo), "xrEndFrame");
-	
-	LOG_L(L_DEBUG, "[VR] Frame submitted successfully");
 }
 
 void COpenXRManager::GetRecommendedResolution(uint32_t& width, uint32_t& height) const
@@ -512,13 +674,79 @@ void COpenXRManager::GetRecommendedResolution(uint32_t& width, uint32_t& height)
 	}
 }
 
-void COpenXRManager::ConvertXrMatrix(const XrMatrix4x4f& xrMat, CMatrix44f& outMat)
+void COpenXRManager::CreateViewMatrixFromPose(const XrPosef& pose, CMatrix44f& outMat)
 {
-	for (int row = 0; row < 4; ++row) {
-		for (int col = 0; col < 4; ++col) {
-			outMat.m[row * 4 + col] = xrMat.m[col * 4 + row]; // transpose
-		}
-	}
+	// Convert quaternion to rotation matrix
+	const auto& q = pose.orientation;
+	const auto& p = pose.position;
+	
+	// Quaternion to matrix conversion
+	float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;
+	float xx = q.x * x2, xy = q.x * y2, xz = q.x * z2;
+	float yy = q.y * y2, yz = q.y * z2, zz = q.z * z2;
+	float wx = q.w * x2, wy = q.w * y2, wz = q.w * z2;
+	
+	// Build rotation matrix
+	CMatrix44f rotMat;
+	rotMat.m[0] = 1.0f - (yy + zz);
+	rotMat.m[1] = xy + wz;
+	rotMat.m[2] = xz - wy;
+	rotMat.m[3] = 0.0f;
+	
+	rotMat.m[4] = xy - wz;
+	rotMat.m[5] = 1.0f - (xx + zz);
+	rotMat.m[6] = yz + wx;
+	rotMat.m[7] = 0.0f;
+	
+	rotMat.m[8] = xz + wy;
+	rotMat.m[9] = yz - wx;
+	rotMat.m[10] = 1.0f - (xx + yy);
+	rotMat.m[11] = 0.0f;
+	
+	rotMat.m[12] = 0.0f;
+	rotMat.m[13] = 0.0f;
+	rotMat.m[14] = 0.0f;
+	rotMat.m[15] = 1.0f;
+	
+	// Invert to get view matrix (camera looks down -Z)
+	outMat = rotMat.InvertAffine();
+	
+	// Apply translation
+	outMat.m[12] = -(outMat.m[0] * p.x + outMat.m[4] * p.y + outMat.m[8] * p.z);
+	outMat.m[13] = -(outMat.m[1] * p.x + outMat.m[5] * p.y + outMat.m[9] * p.z);
+	outMat.m[14] = -(outMat.m[2] * p.x + outMat.m[6] * p.y + outMat.m[10] * p.z);
+}
+
+void COpenXRManager::CreateProjectionMatrixFromFov(const XrFovf& fov, float nearZ, float farZ, CMatrix44f& outMat)
+{
+	// OpenGL-style asymmetric projection matrix from FOV angles
+	const float tanLeft = std::tan(fov.angleLeft);
+	const float tanRight = std::tan(fov.angleRight);
+	const float tanDown = std::tan(fov.angleDown);
+	const float tanUp = std::tan(fov.angleUp);
+	
+	const float tanWidth = tanRight - tanLeft;
+	const float tanHeight = tanUp - tanDown;
+	
+	outMat.m[0] = 2.0f / tanWidth;
+	outMat.m[1] = 0.0f;
+	outMat.m[2] = 0.0f;
+	outMat.m[3] = 0.0f;
+	
+	outMat.m[4] = 0.0f;
+	outMat.m[5] = 2.0f / tanHeight;
+	outMat.m[6] = 0.0f;
+	outMat.m[7] = 0.0f;
+	
+	outMat.m[8] = (tanRight + tanLeft) / tanWidth;
+	outMat.m[9] = (tanUp + tanDown) / tanHeight;
+	outMat.m[10] = -(farZ + nearZ) / (farZ - nearZ);
+	outMat.m[11] = -1.0f;
+	
+	outMat.m[12] = 0.0f;
+	outMat.m[13] = 0.0f;
+	outMat.m[14] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
+	outMat.m[15] = 0.0f;
 }
 
 void COpenXRManager::ConvertXrPose(const XrPosef& xrPose, float3& outPos, float3& outRot)

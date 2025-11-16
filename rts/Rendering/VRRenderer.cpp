@@ -11,8 +11,9 @@
 #include "System/Matrix44f.h"
 #include "Rendering/GL/myGL.h"
 
-CVRRenderer::CVRRenderer()
-	: initialized(false)
+CVRRenderer::CVRRenderer(CWorldDrawer* wd)
+	: worldDrawer(wd)
+	, initialized(false)
 	, frameInProgress(false)
 {
 	for (int i = 0; i < 2; ++i) {
@@ -135,15 +136,20 @@ bool CVRRenderer::RenderFrame()
 		return false;
 	}
 	
-	// Begin VR frame
-	if (!BeginFrame())
-		return false;
+	// CRITICAL: Poll events first to handle session state changes
+	openxrManager.PollEvents();
 	
-	// Render both eyes
-	RenderEye(0); // left eye
-	RenderEye(1); // right eye
+	// Begin VR frame - this calls xrWaitFrame and xrBeginFrame
+	bool shouldRender = BeginFrame();
 	
-	// Submit to compositor
+	if (shouldRender) {
+		// Only render when runtime says we should (typically VISIBLE or FOCUSED state)
+		RenderEye(0); // left eye
+		RenderEye(1); // right eye
+	}
+	
+	// CRITICAL: Always call EndFrame even when not rendering
+	// This is required by OpenXR spec to allow state transitions (SYNCHRONIZED -> VISIBLE)
 	EndFrame();
 	
 	return true;
@@ -195,7 +201,7 @@ void CVRRenderer::RenderEye(int eyeIndex)
 	
 	// Render the world using existing rendering path
 	// WorldDrawer::Draw() will use the active camera (our VR camera)
-	CWorldDrawer::Draw();
+	worldDrawer->Draw();
 	
 	// Release swapchain image back to OpenXR
 	openxrManager.ReleaseSwapchainImage(eyeIndex);

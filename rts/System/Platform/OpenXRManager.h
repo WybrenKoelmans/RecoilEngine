@@ -8,6 +8,14 @@
 
 #ifdef USE_OPENXR
 
+// Platform-specific defines MUST be before including openxr.h
+#ifdef _WIN32
+	#include <windows.h>
+	#define XR_USE_PLATFORM_WIN32
+#else
+	#define XR_USE_PLATFORM_XLIB
+#endif
+
 #define XR_USE_GRAPHICS_API_OPENGL
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -47,6 +55,14 @@ public:
 	 * @brief Shutdown and cleanup all OpenXR resources
 	 */
 	void Shutdown();
+
+	/**
+	 * @brief Poll OpenXR events and handle session state changes
+	 * 
+	 * CRITICAL: Must be called every frame before BeginFrame().
+	 * Handles session lifecycle events including READY, STOPPING, EXITING.
+	 */
+	void PollEvents();
 
 	/**
 	 * @brief Begin a new VR frame
@@ -118,7 +134,8 @@ private:
 	bool LocateViews();
 	
 	void UpdateHMDTransform();
-	void ConvertXrMatrix(const XrMatrix4x4f& xrMat, CMatrix44f& outMat);
+	void CreateViewMatrixFromPose(const XrPosef& pose, CMatrix44f& outMat);
+	void CreateProjectionMatrixFromFov(const XrFovf& fov, float nearZ, float farZ, CMatrix44f& outMat);
 	void ConvertXrPose(const XrPosef& xrPose, float3& outPos, float3& outRot);
 
 	// OpenXR handles

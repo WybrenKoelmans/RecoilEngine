@@ -8,6 +8,7 @@
 #include <cstdint>
 
 class CCamera;
+class CWorldDrawer;
 
 /**
  * @brief VR stereo rendering coordinator
@@ -21,7 +22,7 @@ class CCamera;
  */
 class CVRRenderer {
 public:
-	CVRRenderer();
+	CVRRenderer(CWorldDrawer* wd);
 	~CVRRenderer();
 
 	/**
@@ -85,6 +86,7 @@ private:
 
 private:
 	COpenXRManager openxrManager;
+	CWorldDrawer* worldDrawer;
 	
 	// Per-eye framebuffer objects
 	struct EyeFramebuffer {
