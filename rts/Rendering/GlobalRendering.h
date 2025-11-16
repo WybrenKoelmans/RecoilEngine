@@ -19,6 +19,10 @@ struct SDL_Rect;
 struct SDL_Window;
 typedef void* SDL_GLContext;
 
+namespace VR {
+	class OpenXRRenderer;
+}
+
 /**
  * @brief Globally accessible unsynced, rendering related data
  *
@@ -47,10 +51,12 @@ public:
 	SDL_GLContext CreateGLContext(const int2& minCtx);
 	SDL_Window* GetWindow() { return sdlWindow; }
 	SDL_GLContext GetContext() { return glContext; }
+	VR::OpenXRRenderer* GetOpenXR() const { return openXR.get(); }
 
 	void DestroyWindowAndContext();
 	void KillSDL() const;
 	void PostInit();
+	void InitOpenXR();
 
 	void SwapBuffers(bool allowSwapBuffers, bool clearErrors);
 
@@ -383,6 +389,7 @@ public:
 public:
 	SDL_Window* sdlWindow;
 	SDL_GLContext glContext;
+	std::unique_ptr<VR::OpenXRRenderer> openXR;
 public:
 	/**
 	* @brief maximum texture unit number

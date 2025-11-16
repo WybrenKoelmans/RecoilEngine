@@ -41,6 +41,7 @@
 #include "Rendering/CommandDrawer.h"
 #include "Rendering/LineDrawer.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/VR/OpenXRRenderer.h"
 #include "Rendering/DebugDrawerAI.h"
 #include "Rendering/HUDDrawer.h"
 #include "Rendering/IconHandler.h"
@@ -1502,15 +1503,47 @@ bool CGame::Draw() {
 		// minimap never covers entire screen when maximized unless map aspect-ratio matches screen
 		// (unlikely);
 		worldDrawer.GenerateIBLTextures();
+	}
 
-		// restore back to the default FBO / Viewport
+	bool renderedInVr = false;
+	if (auto* xrRenderer = globalRendering->GetOpenXR()) {
+		xrRenderer->PollEvents();
+		renderedInVr = xrRenderer->RenderFrame(*this);
+	}
+
+	if (!renderedInVr) {
 		if (FBO::IsSupported())
 			FBO::Unbind();
 		camera->LoadViewport();
-
-		worldDrawer.Draw();
-		worldDrawer.ResetMVPMatrices();
+		RenderSceneContent();
 	}
+
+	if (videoCapturing->AllowRecord()) {
+		videoCapturing->SetLastFrameTime(globalRendering->lastFrameTime = 1000.0f / GAME_SPEED);
+		// does nothing unless StartCapturing has also been called via /createvideo (Windows-only)
+		videoCapturing->RenderFrame();
+	}
+
+	SetDrawMode(gameNotDrawing);
+	CTeamHighlight::Disable();
+
+	const spring_time currentTimePostDraw = spring_gettime();
+	const spring_time currentFrameDrawTime = currentTimePostDraw - currentTimePreDraw;
+	gu->avgDrawFrameTime = mix(gu->avgDrawFrameTime, currentFrameDrawTime.toMilliSecsf(), 0.05f);
+
+	eventHandler.DbgTimingInfo(TIMING_VIDEO, currentTimePreDraw, currentTimePostDraw);
+	globalRendering->SetGLTimeStamp(CGlobalRendering::FRAME_END_TIME_QUERY_IDX);
+
+	lastDrawFrameTime = currentTimePostDraw;
+
+	return true;
+}
+
+
+void CGame::RenderSceneContent()
+{
+	worldDrawer.Draw();
+	worldDrawer.ResetMVPMatrices();
 
 	{
 		SCOPED_TIMER("Draw::Screen");
@@ -1534,26 +1567,6 @@ bool CGame::Draw() {
 
 	glEnable(GL_DEPTH_TEST);
 	glLoadIdentity();
-
-	if (videoCapturing->AllowRecord()) {
-		videoCapturing->SetLastFrameTime(globalRendering->lastFrameTime = 1000.0f / GAME_SPEED);
-		// does nothing unless StartCapturing has also been called via /createvideo (Windows-only)
-		videoCapturing->RenderFrame();
-	}
-
-	SetDrawMode(gameNotDrawing);
-	CTeamHighlight::Disable();
-
-	const spring_time currentTimePostDraw = spring_gettime();
-	const spring_time currentFrameDrawTime = currentTimePostDraw - currentTimePreDraw;
-	gu->avgDrawFrameTime = mix(gu->avgDrawFrameTime, currentFrameDrawTime.toMilliSecsf(), 0.05f);
-
-	eventHandler.DbgTimingInfo(TIMING_VIDEO, currentTimePreDraw, currentTimePostDraw);
-	globalRendering->SetGLTimeStamp(CGlobalRendering::FRAME_END_TIME_QUERY_IDX);
-
-	lastDrawFrameTime = currentTimePostDraw;
-
-	return true;
 }
 
 

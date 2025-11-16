@@ -18,6 +18,7 @@
 #include "Rendering/UniformConstants.h"
 #include "Rendering/Fonts/glFont.h"
 #include "Rendering/Models/ModelsMemStorage.h"
+#include "Rendering/VR/OpenXRRenderer.h"
 #include "System/EventHandler.h"
 #include "System/type2.h"
 #include "System/TimeProfiler.h"
@@ -621,6 +622,11 @@ void CGlobalRendering::DestroyWindowAndContext() {
 	WindowManagerHelper::SetIconSurface(sdlWindow, nullptr);
 	SetWindowInputGrabbing(false);
 
+	if (openXR != nullptr) {
+		openXR->Shutdown();
+		openXR.reset();
+	}
+
 	SDL_GL_MakeCurrent(sdlWindow, nullptr);
 	SDL_DestroyWindow(sdlWindow);
 
@@ -665,7 +671,22 @@ void CGlobalRendering::PostInit() {
 	RenderBuffer::InitStatic();
 	GL::shapes.Init();
 
+	InitOpenXR();
+
 	UpdateTimer();
+}
+
+
+void CGlobalRendering::InitOpenXR()
+{
+	if (openXR != nullptr)
+		return;
+
+	openXR = std::make_unique<VR::OpenXRRenderer>();
+	if (!openXR->Initialize(*this)) {
+		LOG_L(L_WARNING, "[GR::InitOpenXR] failed to initialize OpenXR renderer");
+		openXR.reset();
+	}
 }
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
@@ -688,29 +709,33 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 		RenderBuffer::SwapRenderBuffers(); //all RBs are swapped here
 		IStreamBufferConcept::PutBufferLocks();
 
-		//https://stackoverflow.com/questions/68480028/supporting-opengl-screen-capture-by-third-party-applications
-		glBindFramebuffer(GL_READ_FRAMEBUFFER_EXT, 0);
-		
-		#ifdef _WIN32
-			using DwmFlushT = HRESULT(WINAPI*)();
-			if (forceDWMFlush == 1){ 
-				ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPre");
-				if (DwmFlush)
-					reinterpret_cast<DwmFlushT>(DwmFlush)();
-			}
-		#endif
-		
-		SDL_GL_SwapWindow(sdlWindow);
+		if (openXR != nullptr && openXR->IsActive()) {
+			FrameMark;
+		} else {
+			//https://stackoverflow.com/questions/68480028/supporting-opengl-screen-capture-by-third-party-applications
+			glBindFramebuffer(GL_READ_FRAMEBUFFER_EXT, 0);
 
-		#ifdef _WIN32
-			if (forceDWMFlush == 2){ 
-				ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPost");
-				if (DwmFlush)
-					reinterpret_cast<DwmFlushT>(DwmFlush)();
-			}
-		#endif
+			#ifdef _WIN32
+				using DwmFlushT = HRESULT(WINAPI*)();
+				if (forceDWMFlush == 1){ 
+					ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPre");
+					if (DwmFlush)
+						reinterpret_cast<DwmFlushT>(DwmFlush)();
+				}
+			#endif
 
-		FrameMark;
+			SDL_GL_SwapWindow(sdlWindow);
+
+			#ifdef _WIN32
+				if (forceDWMFlush == 2){ 
+					ZoneScopedN("CGlobalRendering::SwapBuffers::DWMFlushPost");
+					if (DwmFlush)
+						reinterpret_cast<DwmFlushT>(DwmFlush)();
+				}
+			#endif
+
+			FrameMark;
+		}
 	}
 	// exclude debug from SCOPED_TIMER("Misc::SwapBuffers");
 	eventHandler.DbgTimingInfo(TIMING_SWAP, pre, spring_now());

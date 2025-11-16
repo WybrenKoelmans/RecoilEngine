@@ -66,5 +66,21 @@ if    (MINGW)
 #		message(SEND_ERROR "pthreadGC2 not found!")
 #	endif()
 #	install(FILES ${PTHREADGC2_LIBRARY} DESTINATION ${BINDIR})
+
+	# Try to install OpenXR loader DLL from common locations
+	set(OPENXR_DLL_PATH "/usr/x86_64-w64-mingw32/bin/libopenxr_loader.dll")
+	if (EXISTS ${OPENXR_DLL_PATH})
+		message(STATUS "Installing OpenXR loader from: ${OPENXR_DLL_PATH}")
+		install(FILES ${OPENXR_DLL_PATH} DESTINATION ${BINDIR})
+	else()
+		message(WARNING "OpenXR loader DLL not found at ${OPENXR_DLL_PATH} - VR may not work at runtime")
+	endif()
+
+	# OpenXR loader depends on libstdc++-6.dll
+	set(LIBSTDCPP_DLL_PATH "/usr/lib/gcc/x86_64-w64-mingw32/13-posix/libstdc++-6.dll")
+	if (EXISTS ${LIBSTDCPP_DLL_PATH})
+		message(STATUS "Installing libstdc++-6.dll for OpenXR: ${LIBSTDCPP_DLL_PATH}")
+		install(FILES ${LIBSTDCPP_DLL_PATH} DESTINATION ${BINDIR})
+	endif()
 endif (MINGW)
 

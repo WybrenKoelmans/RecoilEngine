@@ -36,6 +36,42 @@ endif()
 
 ### give error when not found
 find_package_static(DevIL REQUIRED)
+find_package(OpenXR 1.0 COMPONENTS openxr_loader QUIET)
+
+if (NOT TARGET OpenXR::openxr_loader)
+       set(_openxr_search_paths
+	       $ENV{OpenXR_ROOT}
+	       ${OpenXR_ROOT}
+	       ${OpenXR_DIR}
+	       /usr/x86_64-w64-mingw32
+	       /usr/local
+	       /usr
+       )
+
+       find_path(OpenXR_INCLUDE_DIR
+	       NAMES openxr/openxr.h
+	       HINTS ${_openxr_search_paths}
+	       PATH_SUFFIXES include
+       )
+
+       find_library(OpenXR_LOADER_LIBRARY
+	       NAMES openxr_loader
+	       HINTS ${_openxr_search_paths}
+	       PATH_SUFFIXES lib lib64
+       )
+
+       if (NOT OpenXR_INCLUDE_DIR OR NOT OpenXR_LOADER_LIBRARY)
+	       message(FATAL_ERROR "OpenXR loader not found. Set OpenXR_ROOT or OpenXR_DIR to a valid OpenXR SDK.")
+       endif()
+
+       add_library(OpenXR::openxr_loader UNKNOWN IMPORTED)
+       set_target_properties(OpenXR::openxr_loader PROPERTIES
+	       IMPORTED_LOCATION "${OpenXR_LOADER_LIBRARY}"
+	       INTERFACE_INCLUDE_DIRECTORIES "${OpenXR_INCLUDE_DIR}"
+       )
+
+	       message(STATUS "Using OpenXR loader from ${OpenXR_LOADER_LIBRARY}")
+endif()
 
 ### Assemble common include dirs
 include_directories(BEFORE lib)
@@ -96,6 +132,8 @@ endif ()
 if (WIN32)
 	list(APPEND engineCommonLibraries ${WIN32_LIBRARIES})
 endif (WIN32)
+
+list(APPEND engineCommonLibraries OpenXR::openxr_loader)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD")
 	#tcmalloc on freebsd is broken, default disable it (#4754)

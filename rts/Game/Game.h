@@ -92,6 +92,7 @@ public:
 
 	void ReloadCOB(const std::string& msg, int player);
 	void ReloadCEGs(const std::string& tag);
+	void RenderSceneContent();
 
 	void StartSkip(int toFrame);
 	void EndSkip();
