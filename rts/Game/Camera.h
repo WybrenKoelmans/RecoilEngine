@@ -13,13 +13,15 @@
 class CCamera {
 public:
 	enum {
-		CAMTYPE_PLAYER = 0, // main camera
-		CAMTYPE_UWREFL = 1, // used for underwater reflections
-		CAMTYPE_SHADOW = 2, // used for shadowmap generation
-		CAMTYPE_ENVMAP = 3, // used for cubemap generation
-		CAMTYPE_VISCUL = 4, // used for frustum culling
-		CAMTYPE_ACTIVE = 5, // pointer to currently active camera
-		CAMTYPE_COUNT  = 6,
+		CAMTYPE_PLAYER  = 0, // main camera
+		CAMTYPE_UWREFL  = 1, // used for underwater reflections
+		CAMTYPE_SHADOW  = 2, // used for shadowmap generation
+		CAMTYPE_ENVMAP  = 3, // used for cubemap generation
+		CAMTYPE_VISCUL  = 4, // used for frustum culling
+		CAMTYPE_ACTIVE  = 5, // pointer to currently active camera
+		CAMTYPE_VR_LEFT = 6, // VR left eye camera
+		CAMTYPE_VR_RIGHT= 7, // VR right eye camera
+		CAMTYPE_COUNT   = 8,
 	};
 
 	enum {
@@ -246,6 +248,9 @@ public:
 
 	void ConfigNotify(const std::string& key, const std::string& value);
 	void ConfigUpdate();
+
+	// VR support: apply HMD transform on top of base camera state
+	void ApplyVRTransform(const CCamera* baseCamera, const CMatrix44f& vrViewMatrix, const CMatrix44f& vrProjectionMatrix);
 
 private:
 	void gluPerspectiveSpring(const float aspect, const float zn, const float zf);

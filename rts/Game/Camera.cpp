@@ -278,6 +278,37 @@ void CCamera::UpdateViewPort(int px, int py, int sx, int sy)
 	viewport[3] = sy;
 }
 
+void CCamera::ApplyVRTransform(const CCamera* baseCamera, const CMatrix44f& vrViewMatrix, const CMatrix44f& vrProjectionMatrix)
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	
+	// Copy all state from the player camera
+	CopyState(baseCamera);
+	
+	// Override with VR-specific matrices from OpenXR
+	// These already include HMD pose + eye offset (IPD)
+	viewMatrix = vrViewMatrix;
+	projectionMatrix = vrProjectionMatrix;
+	
+	// Recalculate dependent matrices
+	viewProjectionMatrix = projectionMatrix * viewMatrix;
+	viewMatrixInverse = viewMatrix.InvertAffine();
+	projectionMatrixInverse = projectionMatrix.Invert();
+	viewProjectionMatrixInverse = viewProjectionMatrix.Invert();
+	
+	billboardMatrix = viewMatrix;
+	billboardMatrix.SetPos(ZeroVector);
+	billboardMatrix.Transpose();
+	
+	// Extract position and orientation from VR view matrix for consistency
+	// Note: VR view matrices are already in world space
+	pos = viewMatrix.GetPos();
+	forward = viewMatrix.GetZ();
+	right = viewMatrix.GetX();
+	up = viewMatrix.GetY();
+	rot = GetRotFromDir(forward);
+}
+
 void CCamera::UpdateLoadViewport(int px, int py, int sx, int sy)
 {
 	RECOIL_DETAILED_TRACY_ZONE;

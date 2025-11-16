@@ -4,6 +4,7 @@
 #define _GAME_H
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,10 @@
 class LuaParser;
 class ILoadSaveHandler;
 class ChatMessage;
+
+#ifdef USE_OPENXR
+class CVRRenderer;
+#endif
 
 
 class CGame : public CGameController
@@ -216,6 +221,10 @@ private:
 	JobDispatcher jobDispatcher;
 
 	CWorldDrawer worldDrawer;
+
+#ifdef USE_OPENXR
+	std::unique_ptr<CVRRenderer> vrRenderer;
+#endif
 
 	/// <playerID, <packetCode, total bytes> >
 	spring::unordered_map<int, PlayerTrafficInfo> playerTraffic;

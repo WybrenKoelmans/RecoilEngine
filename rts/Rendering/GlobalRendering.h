@@ -368,6 +368,14 @@ public:
 	bool fullScreen;
 	bool borderless;
 
+	/**
+	 * @brief VR rendering mode
+	 * 
+	 * When enabled, switches to VR stereo rendering using OpenXR.
+	 * Renders two separate views (left/right eye) with IPD-based stereo.
+	 */
+	bool vrEnabled;
+
 	bool underExternalDebug;
 	
 	/** 

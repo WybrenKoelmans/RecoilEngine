@@ -13,8 +13,10 @@ fi
 USAGE="Usage: $0 [--help] [--configure|--compile] [-j|--jobs {number_of_jobs}] {windows|linux} [cmake_flag...]"
 export CONFIGURE=true
 export COMPILE=true
+export DOCKER_NO_USER_MOUNT=false
 export CMAKE_BUILD_PARALLEL_LEVEL=
 OS=
+CMAKE_OPENXR_PATH="-DOpenXR_DIR=/usr/x86_64-w64-mingw32/cmake"
 while (( $# > 0 )); do
   case $1 in
     --configure)
@@ -25,6 +27,10 @@ while (( $# > 0 )); do
     --compile)
       CONFIGURE=false
       COMPILE=true
+      shift
+      ;;
+    --no-user-mount)
+      DOCKER_NO_USER_MOUNT=true
       shift
       ;;
     --help)
@@ -49,6 +55,10 @@ while (( $# > 0 )); do
     windows|linux)
       OS="$1"
       shift
+      # Add OpenXR path for Windows builds
+      if [[ "$OS" == "windows" ]]; then
+        set -- "$@" $CMAKE_OPENXR_PATH
+      fi
       break
       ;;
     *)
@@ -65,14 +75,23 @@ mkdir -p build-$OS .cache/ccache-$OS
 
 # Use locally build image if available, and pull from upstream if not
 image=recoil-build-amd64-$OS:latest
+echo $image
 if [[ -z "$(docker images -q $image 2> /dev/null)" ]]; then
   image=ghcr.io/beyond-all-reason/recoil-build-amd64-$OS:latest
   docker pull $image
 fi
 
+MOUNT_PASSWD="-v /etc/passwd:/etc/passwd:ro"
+MOUNT_GROUP="-v /etc/group:/etc/group:ro"
+
+if [ "$DOCKER_NO_USER_MOUNT" = "true" ]; then
+    MOUNT_PASSWD=""
+    MOUNT_GROUP=""
+fi
+
 docker run -it --rm \
-    -v /etc/passwd:/etc/passwd:ro \
-    -v /etc/group:/etc/group:ro \
+    $MOUNT_PASSWD \
+    $MOUNT_GROUP \
     --user=$(id -u):$(id -g) \
     -v $(pwd):/build/src:ro \
     -v $(pwd)/.cache/ccache-$OS:/build/cache:rw \

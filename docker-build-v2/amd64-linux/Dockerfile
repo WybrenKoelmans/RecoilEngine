@@ -11,6 +11,28 @@ RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
     curl gcc-13 g++-13 git ninja-build curl p7zip-full python3-pip python3-setuptools \
     libsdl2-dev libopenal-dev libfreetype6-dev libfontconfig1-dev \
+    libopenxr-dev \
+ && apt-get remove --purge --yes software-properties-common \
+ && apt-get autoremove --purge --yes \
+ && apt-get upgrade --yes \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+RUN mkdir src cache out artifacts && chmod a+rwx cache out artifacts
+
+# Fetch library dependencies and configure resolution
+# We pick ubuntu 18 instead of newer one because we are dynamically linking
+# to glibc and a few other libraries and we want to keep compatibility for as
+# many users as possible.
+FROM docker.io/ubuntu:18.04
+ENV ENGINE_PLATFORM=amd64-linux
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes software-properties-common \
+ && add-apt-repository ppa:ubuntu-toolchain-r/test --yes \
+ && apt-get update \
+ && apt-get install --no-install-recommends --yes \
+    curl gcc-13 g++-13 git ninja-build curl p7zip-full python3-pip python3-setuptools \
+    libsdl2-dev libopenal-dev libfreetype6-dev libfontconfig1-dev \
  && apt-get remove --purge --yes software-properties-common \
  && apt-get autoremove --purge --yes \
  && apt-get upgrade --yes \

@@ -33,6 +33,9 @@
 #include "ExternalAI/EngineOutHandler.h"
 #include "ExternalAI/SkirmishAIHandler.h"
 #include "Rendering/WorldDrawer.h"
+#ifdef USE_OPENXR
+#include "Rendering/VRRenderer.h"
+#endif
 #include "Rendering/Env/IWater.h"
 #include "Rendering/Env/WaterRendering.h"
 #include "Rendering/Env/MapRendering.h"
@@ -754,6 +757,21 @@ void CGame::PreLoadRendering()
 void CGame::PostLoadRendering() {
 	ZoneScoped;
 	worldDrawer.InitPost();
+
+#ifdef USE_OPENXR
+	// Initialize VR rendering if enabled
+	if (globalRendering->vrEnabled) {
+		LOG_L(L_INFO, "[VR] Initializing VR rendering system...");
+		vrRenderer = std::make_unique<CVRRenderer>();
+		
+		if (!vrRenderer->Initialize()) {
+			LOG_L(L_FATAL, "[VR] Failed to initialize VR renderer - cannot start in VR mode");
+			throw content_error("VR initialization failed");
+		}
+		
+		LOG_L(L_INFO, "[VR] VR rendering system initialized successfully");
+	}
+#endif
 }
 
 
@@ -1004,6 +1022,16 @@ void CGame::KillRendering()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	LOG("[Game::%s][1]", __func__);
+
+#ifdef USE_OPENXR
+	// Shutdown VR renderer if active
+	if (vrRenderer) {
+		vrRenderer->Shutdown();
+		vrRenderer.reset();
+		LOG("[Game::%s] VR renderer shut down", __func__);
+	}
+#endif
+
 	icon::iconHandler.Kill();
 	spring::SafeDelete(geometricObjects);
 	worldDrawer.Kill();
@@ -1498,18 +1526,35 @@ bool CGame::Draw() {
 	{
 		minimap->Update();
 
-		// note: neither this call nor DrawWorld can be made conditional on minimap->GetMaximized()
-		// minimap never covers entire screen when maximized unless map aspect-ratio matches screen
-		// (unlikely);
-		worldDrawer.GenerateIBLTextures();
+#ifdef USE_OPENXR
+		// VR rendering path - completely separate from desktop rendering
+		if (globalRendering->vrEnabled && vrRenderer && vrRenderer->IsInitialized()) {
+			// Generate IBL textures once (shared between eyes)
+			worldDrawer.GenerateIBLTextures();
+			
+			// Render VR frame (both eyes)
+			if (!vrRenderer->RenderFrame()) {
+				LOG_L(L_WARNING, "[VR] Failed to render VR frame");
+			}
+			
+			// VR rendering handles its own MVP reset
+		} else
+#endif
+		{
+			// Desktop rendering path (original code)
+			// note: neither this call nor DrawWorld can be made conditional on minimap->GetMaximized()
+			// minimap never covers entire screen when maximized unless map aspect-ratio matches screen
+			// (unlikely);
+			worldDrawer.GenerateIBLTextures();
 
-		// restore back to the default FBO / Viewport
-		if (FBO::IsSupported())
-			FBO::Unbind();
-		camera->LoadViewport();
+			// restore back to the default FBO / Viewport
+			if (FBO::IsSupported())
+				FBO::Unbind();
+			camera->LoadViewport();
 
-		worldDrawer.Draw();
-		worldDrawer.ResetMVPMatrices();
+			worldDrawer.Draw();
+			worldDrawer.ResetMVPMatrices();
+		}
 	}
 
 	{

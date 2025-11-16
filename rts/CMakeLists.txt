@@ -34,6 +34,47 @@ if(DEBUG_GLSTATE)
 	add_definitions(-DDEBUG_GLSTATE)
 endif()
 
+option(USE_OPENXR "Enable OpenXR VR support" FALSE)
+if(USE_OPENXR)
+	# Try to find OpenXR using find_package first
+	find_package(OpenXR QUIET)
+	
+	if(NOT OpenXR_FOUND)
+		# Fallback to manual search
+		find_path(OPENXR_INCLUDE_DIR openxr/openxr.h
+			PATHS
+				/usr/include
+				/usr/local/include
+				$ENV{OPENXR_SDK}/include
+		)
+		find_library(OPENXR_LIBRARY
+			NAMES openxr_loader
+			PATHS
+				/usr/lib
+				/usr/local/lib
+				$ENV{OPENXR_SDK}/lib
+		)
+		
+		if(OPENXR_INCLUDE_DIR AND OPENXR_LIBRARY)
+			set(OpenXR_FOUND TRUE)
+			message(STATUS "Found OpenXR: ${OPENXR_LIBRARY}")
+		else()
+			message(FATAL_ERROR "OpenXR not found. Please install OpenXR SDK or set OPENXR_SDK environment variable.")
+		endif()
+	endif()
+	
+	if(OpenXR_FOUND)
+		add_definitions(-DUSE_OPENXR)
+		if(TARGET OpenXR::openxr_loader)
+			list(APPEND engineCommonLibraries OpenXR::openxr_loader)
+		else()
+			include_directories(${OPENXR_INCLUDE_DIR})
+			list(APPEND engineCommonLibraries ${OPENXR_LIBRARY})
+		endif()
+		message(STATUS "OpenXR VR support enabled")
+	endif()
+endif(USE_OPENXR)
+
 ### give error when not found
 find_package_static(DevIL REQUIRED)
 
