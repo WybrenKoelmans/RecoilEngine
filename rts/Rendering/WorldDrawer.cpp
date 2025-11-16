@@ -397,26 +397,39 @@ void CWorldDrawer::DrawEyeScene() const
 
 	const auto& sky = ISky::GetSky();
 	glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
+	CheckGLError("glClearColor in DrawEyeScene");
+	
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	CheckGLError("glClear in DrawEyeScene");
 
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	CheckGLError("GL state setup in DrawEyeScene");
 
 	DrawOpaqueObjects();
+	CheckGLError("DrawOpaqueObjects");
+	
 	DrawAlphaObjects();
+	CheckGLError("DrawAlphaObjects");
+	
 	{
 		SCOPED_TIMER("Draw::World::DrawWorld");
 		SCOPED_GL_DEBUGGROUP("Draw::World::DrawWorld");
 		eventHandler.DrawWorld();
+		CheckGLError("eventHandler.DrawWorld");
 	}
 
 
 	DrawMiscObjects();
+	CheckGLError("DrawMiscObjects");
+	
 	DrawBelowWaterOverlay();
+	CheckGLError("DrawBelowWaterOverlay");
 
 	glDisable(GL_FOG);
+	CheckGLError("glDisable GL_FOG");
 }
 
 
@@ -449,12 +462,11 @@ void CWorldDrawer::Draw() const
 				}
 
 				static int logCounter = 0;
-				if (logCounter < 5) {
+				if (logCounter < 10) {
 					LOG_L(L_INFO, "[VR] Eye %d: fb=%u size=%dx%d frustum=[%.3f,%.3f,%.3f,%.3f] near=%.3f far=%.3f",
 						eye.eyeIndex, eye.framebuffer, eye.width, eye.height,
 						eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop,
 						eye.nearPlane, eye.farPlane);
-					logCounter++;
 				}
 
 				glBindFramebuffer(GL_FRAMEBUFFER, eye.framebuffer);
@@ -462,51 +474,106 @@ void CWorldDrawer::Draw() const
 
 				// Check framebuffer status
 				GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-				if (fbStatus != GL_FRAMEBUFFER_COMPLETE && logCounter < 5) {
+				if (fbStatus != GL_FRAMEBUFFER_COMPLETE) {
 					LOG_L(L_ERROR, "[VR] Framebuffer not complete: 0x%x", fbStatus);
+					return;
 				}
 
-				// Clear with a neutral color
-				glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+				// Update globalRendering viewport for this eye
+				globalRendering->viewPosX = 0;
+				globalRendering->viewPosY = 0;
+				globalRendering->viewSizeX = eye.width;
+				globalRendering->viewSizeY = eye.height;
+				globalRendering->aspectRatio = static_cast<float>(eye.width) / eye.height;
+				globalRendering->pixelX = 1.0f / eye.width;
+				globalRendering->pixelY = 1.0f / eye.height;
+
+				// Calculate eye position and orientation in world space
+				CQuaternion eyeRot = baseOrientation * eye.relativeOrientation;
+				eyeRot.Normalize();
+				
+				float3 eyePos = basePos + baseOrientation.Rotate(eye.eyeOffsetWorld);
+				
+				if (logCounter < 10) {
+					LOG_L(L_INFO, "[VR] Eye %d: basePos=[%.2f,%.2f,%.2f] eyePos=[%.2f,%.2f,%.2f] baseRot=[%.3f,%.3f,%.3f]",
+						eye.eyeIndex, basePos.x, basePos.y, basePos.z, 
+						eyePos.x, eyePos.y, eyePos.z,
+						baseRot.x, baseRot.y, baseRot.z);
+				}
+				
+				// Update camera with VR eye parameters
+				camera->SetPos(eyePos);
+				camera->SetRot(eyeRot.ToEulerYPR());
+				CheckGLError("camera SetPos/SetRot");
+				
+				// Set up asymmetric frustum for VR
+				camera->SetAsymmetricFrustum(
+					eye.frustumLeft, eye.frustumRight,
+					eye.frustumBottom, eye.frustumTop,
+					eye.nearPlane, eye.farPlane
+				);
+				CheckGLError("camera SetAsymmetricFrustum");
+				
+				camera->UpdateLoadViewport(0, 0, eye.width, eye.height);
+				CheckGLError("camera UpdateLoadViewport");
+				
+				camera->Update();
+				CheckGLError("camera Update");
+
+				if (logCounter < 10) {
+					LOG_L(L_INFO, "[VR] Eye %d: About to render scene", eye.eyeIndex);
+				}
+
+				// Clear to a visible color for debugging
+				glClearColor(0.2f, 0.3f, 0.5f, 1.0f);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 				CheckGLError("glClear");
 
-				// Setup projection with VR frustum
+				// Set viewport
+				glViewport(0, 0, eye.width, eye.height);
+				CheckGLError("glViewport");
+
+				// Draw test cube for debugging
 				glMatrixMode(GL_PROJECTION);
 				glLoadIdentity();
 				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
 				CheckGLError("glFrustum");
 				
-				// Setup modelview with HMD tracking
 				glMatrixMode(GL_MODELVIEW);
 				glLoadIdentity();
+				glTranslatef(-eyePos.x, -eyePos.y, -eyePos.z);
+				const float3& camRot = camera->GetRot();
+				glRotatef(math::RAD_TO_DEG * camRot.z, 0.0f, 0.0f, 1.0f);
+				glRotatef(math::RAD_TO_DEG * camRot.y, 0.0f, 1.0f, 0.0f);
+				glRotatef(math::RAD_TO_DEG * camRot.x, 1.0f, 0.0f, 0.0f);
+				CheckGLError("modelview setup");
 				
-				// Create view matrix from HMD tracking
-				CQuaternion eyeRot = eye.relativeOrientation;
-				eyeRot.Normalize();
-				CMatrix44f viewMatrix = eyeRot.Inverse().ToRotMatrix();
-				viewMatrix.Translate(-eye.eyeOffsetWorld.x, -eye.eyeOffsetWorld.y, -eye.eyeOffsetWorld.z);
-				glLoadMatrixf(viewMatrix.m);
-				CheckGLError("view matrix");
-				
-				// Enable proper 3D rendering state
-				glEnable(GL_DEPTH_TEST);
-				glDepthMask(GL_TRUE);
-				glDepthFunc(GL_LESS);
-				glDisable(GL_CULL_FACE);  // No culling so we can see all faces
-				glDisable(GL_BLEND);
-				CheckGLError("GL state setup");
-				
-				// Draw a stationary cube 2 meters in front of origin
 				glPushMatrix();
-				glTranslatef(0.0f, 0.0f, -2000.0f);
-				glScalef(300.0f, 300.0f, 300.0f);
+				glTranslatef(0.0f, 100.0f, -500.0f);
+				glScalef(50.0f, 50.0f, 50.0f);
 				DrawVRTestCube();
 				glPopMatrix();
-				CheckGLError("cube drawing");
+				CheckGLError("test cube");
 
-				if (logCounter < 5) {
-					LOG_L(L_INFO, "[VR] Drew fullscreen quad and cube for eye %d", eye.eyeIndex);
+				if (logCounter < 10) {
+					LOG_L(L_INFO, "[VR] Eye %d: Test cube drawn, now rendering game scene", eye.eyeIndex);
+				}
+
+				// Load camera matrices into OpenGL (required by DrawEyeScene)
+				camera->LoadMatrices();
+				CheckGLError("camera LoadMatrices");
+				
+				if (logCounter < 10) {
+					LOG_L(L_INFO, "[VR] Eye %d: Camera matrices loaded", eye.eyeIndex);
+				}
+
+				// Render the actual game scene
+				DrawEyeScene();
+				CheckGLError("DrawEyeScene");
+
+				if (logCounter < 10) {
+					LOG_L(L_INFO, "[VR] Eye %d: Scene rendered", eye.eyeIndex);
+					logCounter++;
 				}
 
 				glFlush();
@@ -605,7 +672,10 @@ void CWorldDrawer::DrawAlphaObjects() const
 {
 	// transparent objects
 	glEnable(GL_BLEND);
+	CheckGLError("glEnable(GL_BLEND)");
+	
 	glDepthFunc(GL_LEQUAL);
+	CheckGLError("glDepthFunc(GL_LEQUAL)");
 
 	static const double belowPlaneEq[4] = {0.0f, -1.0f, 0.0f, 0.0f};
 	static const double abovePlaneEq[4] = {0.0f,  1.0f, 0.0f, 0.0f};
@@ -617,16 +687,32 @@ void CWorldDrawer::DrawAlphaObjects() const
 		SCOPED_GL_DEBUGGROUP("Draw::World::Models::Alpha");
 		// clip in model-space
 		if (hasWaterRendering) {
+			// Ensure we're in modelview mode for glClipPlane
+			glMatrixMode(GL_MODELVIEW);
+			CheckGLError("glMatrixMode(GL_MODELVIEW) before clip");
+			
 			glPushMatrix();
+			CheckGLError("glPushMatrix before clip");
+			
 			glLoadIdentity();
+			CheckGLError("glLoadIdentity before clip");
+			
 			glClipPlane(GL_CLIP_PLANE3, belowPlaneEq);
+			CheckGLError("glClipPlane");
+			
 			glPopMatrix();
+			CheckGLError("glPopMatrix after clip");
+			
 			glEnable(GL_CLIP_PLANE3);
+			CheckGLError("glEnable(GL_CLIP_PLANE3)");
 		}
 
 		// draw alpha-objects below water surface (farthest)
 		unitDrawer->DrawAlphaPass(false);
+		CheckGLError("unitDrawer->DrawAlphaPass");
+		
 		featureDrawer->DrawAlphaPass(false);
+		CheckGLError("featureDrawer->DrawAlphaPass");
 	}
 	{
 		SCOPED_TIMER("Draw::World::Particles");
@@ -649,23 +735,46 @@ void CWorldDrawer::DrawAlphaObjects() const
 		{
 			ZoneScopedN("Draw::World::Water::UpdateWater");
 			water->UpdateWater(game);
+			CheckGLError("water->UpdateWater");
 		}
 		water->Draw();
+		CheckGLError("water->Draw");
+		
 		eventHandler.DrawWaterPost();
+		CheckGLError("eventHandler.DrawWaterPost");
 	}
+	
+	CheckGLError("After water rendering block");
 
 	{
 		SCOPED_TIMER("Draw::World::Models::Alpha");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Alpha");
+		
+		// Ensure we're in modelview mode for glClipPlane
+		glMatrixMode(GL_MODELVIEW);
+		CheckGLError("glMatrixMode(GL_MODELVIEW) before clip 2");
+		
 		glPushMatrix();
+		CheckGLError("glPushMatrix before clip 2");
+		
 		glLoadIdentity();
+		CheckGLError("glLoadIdentity before clip 2");
+		
 		glClipPlane(GL_CLIP_PLANE3, abovePlaneEq);
+		CheckGLError("glClipPlane 2");
+		
 		glPopMatrix();
+		CheckGLError("glPopMatrix after clip 2");
+		
 		glEnable(GL_CLIP_PLANE3);
+		CheckGLError("glEnable(GL_CLIP_PLANE3) 2");
 
 		// draw alpha-objects above water surface (closest)
 		unitDrawer->DrawAlphaPass(false);
+		CheckGLError("unitDrawer->DrawAlphaPass 2");
+		
 		featureDrawer->DrawAlphaPass(false);
+		CheckGLError("featureDrawer->DrawAlphaPass 2");
 	}
 	{
 		SCOPED_TIMER("Draw::World::Particles");
