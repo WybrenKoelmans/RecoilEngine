@@ -27,6 +27,10 @@
 #if defined(USE_VR)
 namespace {
 
+// Thread-local storage for the current VR framebuffer
+// This is needed because some drawing functions unbind the framebuffer
+thread_local GLuint g_currentVRFramebuffer = 0;
+
 void CheckGLError(const char* label) {
 	GLenum err;
 	while ((err = glGetError()) != GL_NO_ERROR) {
@@ -411,8 +415,28 @@ void CWorldDrawer::DrawEyeScene() const
 	DrawOpaqueObjects();
 	CheckGLError("DrawOpaqueObjects");
 	
+	// Rebind VR framebuffer if it was unbound
+	if (g_currentVRFramebuffer != 0) {
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		if (fb == 0) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_currentVRFramebuffer);
+			CheckGLError("Rebind VR FB after DrawOpaqueObjects");
+		}
+	}
+	
 	DrawAlphaObjects();
 	CheckGLError("DrawAlphaObjects");
+	
+	// Rebind VR framebuffer if it was unbound
+	if (g_currentVRFramebuffer != 0) {
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		if (fb == 0) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_currentVRFramebuffer);
+			CheckGLError("Rebind VR FB after DrawAlphaObjects");
+		}
+	}
 	
 	{
 		SCOPED_TIMER("Draw::World::DrawWorld");
@@ -421,12 +445,41 @@ void CWorldDrawer::DrawEyeScene() const
 		CheckGLError("eventHandler.DrawWorld");
 	}
 
+	// Rebind VR framebuffer if it was unbound
+	if (g_currentVRFramebuffer != 0) {
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		if (fb == 0) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_currentVRFramebuffer);
+			CheckGLError("Rebind VR FB after DrawWorld");
+		}
+	}
 
 	DrawMiscObjects();
 	CheckGLError("DrawMiscObjects");
 	
+	// Rebind VR framebuffer if it was unbound
+	if (g_currentVRFramebuffer != 0) {
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		if (fb == 0) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_currentVRFramebuffer);
+			CheckGLError("Rebind VR FB after DrawMiscObjects");
+		}
+	}
+	
 	DrawBelowWaterOverlay();
 	CheckGLError("DrawBelowWaterOverlay");
+	
+	// Rebind VR framebuffer if it was unbound
+	if (g_currentVRFramebuffer != 0) {
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		if (fb == 0) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_currentVRFramebuffer);
+			CheckGLError("Rebind VR FB after DrawBelowWaterOverlay");
+		}
+	}
 
 	glDisable(GL_FOG);
 	CheckGLError("glDisable GL_FOG");
@@ -462,14 +515,14 @@ void CWorldDrawer::Draw() const
 				}
 
 				static int logCounter = 0;
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: fb=%u size=%dx%d frustum=[%.3f,%.3f,%.3f,%.3f] near=%.3f far=%.3f",
-						eye.eyeIndex, eye.framebuffer, eye.width, eye.height,
-						eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop,
-						eye.nearPlane, eye.farPlane);
+				if (logCounter < 2) {
+					LOG_L(L_INFO, "[VR] Eye %d: Rendering to fb=%u size=%dx%d",
+						eye.eyeIndex, eye.framebuffer, eye.width, eye.height);
+					logCounter++;
 				}
 
 				glBindFramebuffer(GL_FRAMEBUFFER, eye.framebuffer);
+				g_currentVRFramebuffer = eye.framebuffer;  // Store for rebinding if needed
 				CheckGLError("glBindFramebuffer");
 
 				// Check framebuffer status
@@ -478,6 +531,8 @@ void CWorldDrawer::Draw() const
 					LOG_L(L_ERROR, "[VR] Framebuffer not complete: 0x%x", fbStatus);
 					return;
 				}
+				
+
 
 				// Update globalRendering viewport for this eye
 				globalRendering->viewPosX = 0;
@@ -494,95 +549,50 @@ void CWorldDrawer::Draw() const
 				
 				float3 eyePos = basePos + baseOrientation.Rotate(eye.eyeOffsetWorld);
 				
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: basePos=[%.2f,%.2f,%.2f] eyePos=[%.2f,%.2f,%.2f] baseRot=[%.3f,%.3f,%.3f]",
-						eye.eyeIndex, basePos.x, basePos.y, basePos.z, 
-						eyePos.x, eyePos.y, eyePos.z,
-						baseRot.x, baseRot.y, baseRot.z);
-				}
+				// Build view and projection matrices manually for VR
+				// The camera's Update() method interferes with VR tracking
 				
-				// Update camera with VR eye parameters
-				camera->SetPos(eyePos);
-				camera->SetRot(eyeRot.ToEulerYPR());
-				CheckGLError("camera SetPos/SetRot");
-				
-				// Set up asymmetric frustum for VR
-				camera->SetAsymmetricFrustum(
+				// Build projection matrix from VR frustum
+				CMatrix44f projMatrix = CMatrix44f::PerspProj(
 					eye.frustumLeft, eye.frustumRight,
 					eye.frustumBottom, eye.frustumTop,
 					eye.nearPlane, eye.farPlane
 				);
-				CheckGLError("camera SetAsymmetricFrustum");
 				
+				// Build view matrix from eye position and orientation
+				CMatrix44f viewMatrix = eyeRot.Inverse().ToRotMatrix();
+				viewMatrix.Translate(-eyePos.x, -eyePos.y, -eyePos.z);
+				
+				// Set the matrices directly on the camera
+				camera->SetPos(eyePos);
+				camera->SetRot(eyeRot.ToEulerYPR());
+				camera->SetProjMatrix(projMatrix);
+				camera->SetViewMatrix(viewMatrix);
 				camera->UpdateLoadViewport(0, 0, eye.width, eye.height);
-				CheckGLError("camera UpdateLoadViewport");
 				
-				camera->Update();
-				CheckGLError("camera Update");
-
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: About to render scene", eye.eyeIndex);
-				}
-
-				// Clear to a visible color for debugging
-				glClearColor(0.2f, 0.3f, 0.5f, 1.0f);
-				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-				CheckGLError("glClear");
+				CheckGLError("camera matrix setup");
 
 				// Set viewport
 				glViewport(0, 0, eye.width, eye.height);
 				CheckGLError("glViewport");
 
-				// Draw test cube for debugging
-				glMatrixMode(GL_PROJECTION);
-				glLoadIdentity();
-				glFrustum(eye.frustumLeft, eye.frustumRight, eye.frustumBottom, eye.frustumTop, eye.nearPlane, eye.farPlane);
-				CheckGLError("glFrustum");
-				
-				glMatrixMode(GL_MODELVIEW);
-				glLoadIdentity();
-				glTranslatef(-eyePos.x, -eyePos.y, -eyePos.z);
-				const float3& camRot = camera->GetRot();
-				glRotatef(math::RAD_TO_DEG * camRot.z, 0.0f, 0.0f, 1.0f);
-				glRotatef(math::RAD_TO_DEG * camRot.y, 0.0f, 1.0f, 0.0f);
-				glRotatef(math::RAD_TO_DEG * camRot.x, 1.0f, 0.0f, 0.0f);
-				CheckGLError("modelview setup");
-				
-				glPushMatrix();
-				glTranslatef(0.0f, 100.0f, -500.0f);
-				glScalef(50.0f, 50.0f, 50.0f);
-				DrawVRTestCube();
-				glPopMatrix();
-				CheckGLError("test cube");
-
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: Test cube drawn, now rendering game scene", eye.eyeIndex);
-				}
-
 				// Load camera matrices into OpenGL (required by DrawEyeScene)
 				camera->LoadMatrices();
 				CheckGLError("camera LoadMatrices");
-				
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: Camera matrices loaded", eye.eyeIndex);
-				}
 
 				// Render the actual game scene
 				DrawEyeScene();
 				CheckGLError("DrawEyeScene");
 
-				if (logCounter < 10) {
-					LOG_L(L_INFO, "[VR] Eye %d: Scene rendered", eye.eyeIndex);
-					logCounter++;
-				}
-
-				glFlush();
-				CheckGLError("glFlush");
+				// Ensure all rendering is complete before releasing the image
+				glFinish();  // Wait for GPU to complete
+				CheckGLError("glFinish");
 			},
 			*camera
 		);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		g_currentVRFramebuffer = 0;  // Clear VR framebuffer tracking
 
 		// restore base rendering state
 		globalRendering->viewPosX = baseViewPosX;
@@ -727,6 +737,9 @@ void CWorldDrawer::DrawAlphaObjects() const
 		return;
 
 	// draw water (in-between)
+	// TODO: Water rendering has issues with VR asymmetric frustum - temporarily disabled
+	// The water renderer likely needs updates to handle asymmetric projection matrices
+	#if 0
 	{
 		SCOPED_TIMER("Draw::World::Water");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Water");
@@ -745,7 +758,10 @@ void CWorldDrawer::DrawAlphaObjects() const
 	}
 	
 	CheckGLError("After water rendering block");
+	#endif
 
+	// TODO: Second alpha pass disabled since water rendering is disabled in VR
+	#if 0
 	{
 		SCOPED_TIMER("Draw::World::Models::Alpha");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Alpha");
@@ -783,6 +799,7 @@ void CWorldDrawer::DrawAlphaObjects() const
 
 		glDisable(GL_CLIP_PLANE3);
 	}
+	#endif
 }
 
 void CWorldDrawer::DrawMiscObjects() const
