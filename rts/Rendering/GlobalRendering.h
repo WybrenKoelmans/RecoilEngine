@@ -107,6 +107,7 @@ public:
 	void BindDebugTarget(size_t index);
 	void PresentDebugTarget(size_t index);
 	void BindMainFramebuffer() const;
+	float GetDebugEyeSeparation() const { return debugEyeSeparation; }
 #endif
 
 	void LoadViewport();
@@ -457,6 +458,7 @@ private:
 	bool enableVRDebugTargets = false;
 	bool debugTargetsDirty = false;
 	bool debugTargetsInitialized = false;
+	float debugEyeSeparation = 0.064f;
 #endif
 	std::string mainWindowTitle;
 };
