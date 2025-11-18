@@ -107,6 +107,8 @@ public:
 	void BindDebugTarget(size_t index);
 	void PresentDebugTarget(size_t index);
 	void BindMainFramebuffer() const;
+	bool IsDrawingToDebugTarget() const { return drawingToDebugTarget; }
+	uint32_t GetBoundDebugFBO() const { return boundDebugFBO; }
 	float GetDebugEyeSeparation() const { return debugEyeSeparation; }
 #endif
 
@@ -459,6 +461,9 @@ private:
 	bool debugTargetsDirty = false;
 	bool debugTargetsInitialized = false;
 	float debugEyeSeparation = 0.064f;
+	// tracking current debug draw state so FBO::Unbind can restore the correct target
+	mutable bool drawingToDebugTarget = false;
+	mutable uint32_t boundDebugFBO = 0;
 #endif
 	std::string mainWindowTitle;
 };

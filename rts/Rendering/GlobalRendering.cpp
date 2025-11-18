@@ -1833,6 +1833,8 @@ void CGlobalRendering::BindDebugTarget(size_t index)
 	MakeCurrentContext(false);
 	target.fbo.Bind();
 	glViewport(0, 0, target.framebufferSize.x, target.framebufferSize.y);
+	drawingToDebugTarget = true;
+	boundDebugFBO = target.fbo.GetId();
 }
 
 void CGlobalRendering::PresentDebugTarget(size_t index)
@@ -1848,12 +1850,17 @@ void CGlobalRendering::PresentDebugTarget(size_t index)
 		return;
 
 	PresentDebugTargetInternal(target);
+	drawingToDebugTarget = false;
+	boundDebugFBO = 0;
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void CGlobalRendering::BindMainFramebuffer() const
 {
 	MakeCurrentContext(false);
+	// leaving any debug target context
+	drawingToDebugTarget = false;
+	boundDebugFBO = 0;
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1924,8 +1931,24 @@ void CGlobalRendering::DestroyDebugRenderTargetResources(DebugRenderTarget& targ
 bool CGlobalRendering::CreateDebugRenderTargetResources(DebugRenderTarget& target)
 {
 	DestroyDebugRenderTargetResources(target);
+	// Ensure we create GL objects in the target's own context; some container objects (FBO/RBO)
+	// are not reliably shared across contexts on all drivers even when sharing is enabled.
+	// Switch to the debug window context if available, then restore main context afterward.
+	SDL_GLContext prevCtx = glContext;
+	SDL_Window* prevWin = sdlWindow;
+	if (target.window != nullptr && target.context != nullptr) {
+		SDL_GL_MakeCurrent(target.window, target.context);
+	}
+
+	int drawableW = viewSizeX;
+	int drawableH = viewSizeY;
+	if (target.window != nullptr) {
+		// Use drawable size (accounts for HiDPI scaling) for FBO allocation
+		SDL_GL_GetDrawableSize(target.window, &drawableW, &drawableH);
+	}
+
 	target.fbo.Init(false);
-	target.framebufferSize = {viewSizeX, viewSizeY};
+	target.framebufferSize = {drawableW, drawableH};
 
 	glGenTextures(1, &target.colorTexture);
 	glBindTexture(GL_TEXTURE_2D, target.colorTexture);
@@ -1946,12 +1969,18 @@ bool CGlobalRendering::CreateDebugRenderTargetResources(DebugRenderTarget& targe
 	target.fbo.Unbind();
 	glBindTexture(GL_TEXTURE_2D, 0);
 
+	bool result = true;
 	if (!valid) {
 		DestroyDebugRenderTargetResources(target);
-		return false;
+		result = false;
 	}
 
-	return true;
+	// Restore previous context
+	if (prevWin != nullptr && prevCtx != nullptr) {
+		SDL_GL_MakeCurrent(prevWin, prevCtx);
+	}
+
+	return result;
 }
 
 bool CGlobalRendering::CreateDebugWindow(DebugRenderTarget& target, size_t index)

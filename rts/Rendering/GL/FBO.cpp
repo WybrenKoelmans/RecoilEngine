@@ -12,6 +12,7 @@
 #include "System/ContainerUtil.h"
 #include "System/Log/ILog.h"
 #include "System/Config/ConfigHandler.h"
+#include "Rendering/GlobalRendering.h"
 
 #include "System/Misc/TracyDefs.h"
 
@@ -326,7 +327,16 @@ void FBO::Unbind()
 	//   do stuff
 	// FBO::Unbind(); <- not redundant!
 	//   continue with screen FBO
+	#ifndef HEADLESS
+	if (globalRendering != nullptr && globalRendering->IsDrawingToDebugTarget() && globalRendering->GetBoundDebugFBO() != 0) {
+		// Restore debug target FBO instead of default when in debug draw pass
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, globalRendering->GetBoundDebugFBO());
+	} else {
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+	}
+	#else
 	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+	#endif
 }
 
 bool FBO::Blit(int32_t fromID, int32_t toID, const std::array<int, 4>& srcRect, const std::array<int, 4>& dstRect, uint32_t mask, uint32_t filter)

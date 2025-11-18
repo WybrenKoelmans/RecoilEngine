@@ -295,24 +295,44 @@ void CWorldDrawer::ResetMVPMatrices() const
 
 
 
-void CWorldDrawer::Draw() const
+void CWorldDrawer::Draw(bool isMainDraw) const
 {
 	SCOPED_TIMER("Draw::World");
 	SCOPED_GL_DEBUGGROUP("Draw::World");
 
 	const auto& sky = ISky::GetSky();
-	glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    // Only perform full clear & sky fog color setup for main world draw; debug windows
+    // may want to manage their own clear/state externally (they bind their FBO before calling us).
+    if (isMainDraw) {
+		glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    } else {
+        // Minimal clear for debug targets: avoid clearing color if caller wants to preserve previous content
+        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
 
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	camera->Update();
+	if (isMainDraw) {
+		GenerateIBLTextures();
+		// For main draw, update camera fully (including viewport) to match globalRendering settings
+		camera->Update();
+	} else {
+		// For auxiliary debug draws: ensure matrices reflect current camera pos/rot but do not overwrite viewport.
+		// Use reduced update to avoid glViewport call.
+		camera->Update(false, true, false, false); // update mats & frustum only
+		// Clear color buffer as well so debug FBO shows consistent background.
+		glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
+		glClear(GL_COLOR_BUFFER_BIT); // depth/stencil cleared earlier
+	}
 
 	DrawOpaqueObjects();
-	DrawAlphaObjects();
+	if (isMainDraw) {
+		DrawAlphaObjects();
+	}
 	{
 		SCOPED_TIMER("Draw::World::DrawWorld");
 		SCOPED_GL_DEBUGGROUP("Draw::World::DrawWorld");
@@ -320,8 +340,10 @@ void CWorldDrawer::Draw() const
 	}
 
 
-	DrawMiscObjects();
-	DrawBelowWaterOverlay();
+	if (isMainDraw) {
+		DrawMiscObjects();
+		DrawBelowWaterOverlay();
+	}
 
 	glDisable(GL_FOG);
 }

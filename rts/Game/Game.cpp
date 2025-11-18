@@ -1501,11 +1501,6 @@ bool CGame::Draw() {
 		// note: neither this call nor DrawWorld can be made conditional on minimap->GetMaximized()
 		// minimap never covers entire screen when maximized unless map aspect-ratio matches screen
 		// (unlikely);
-		worldDrawer.GenerateIBLTextures();
-
-		// restore back to the default FBO / Viewport
-		if (FBO::IsSupported())
-			FBO::Unbind();
 #ifndef HEADLESS
 		globalRendering->RefreshDebugRenderTargets();
 		const size_t debugTargetCount = globalRendering->GetDebugTargetCount();
@@ -1525,7 +1520,7 @@ bool CGame::Draw() {
 				UniformConstants::GetInstance().UpdateMatrices();
 
 				globalRendering->BindDebugTarget(eyeIdx);
-				worldDrawer.Draw();
+				worldDrawer.Draw(false);
 				worldDrawer.ResetMVPMatrices();
 				globalRendering->PresentDebugTarget(eyeIdx);
 			}
