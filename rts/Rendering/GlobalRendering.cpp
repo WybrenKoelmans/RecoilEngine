@@ -71,7 +71,7 @@ CONFIG(bool, DualScreenMode).defaultValue(false).description("Sets whether to sp
 CONFIG(bool, DualScreenMiniMapOnLeft).defaultValue(false).description("When set, will make the left half of the screen the minimap when DualScreenMode is set.");
 CONFIG(bool, TeamNanoSpray).defaultValue(true).headlessValue(false);
 CONFIG(bool, VRDebugWindows).defaultValue(true).headlessValue(false).description("Creates debug windows for VR render targets.");
-CONFIG(float, VRDebugEyeSeparation).defaultValue(0.064f).minimumValue(0.0f).maximumValue(0.5f).description("Eye separation used for VR debug windows in map elmos.");
+CONFIG(float, VRDebugEyeSeparation).defaultValue(6.40f).minimumValue(0.0f).maximumValue(100.0f).description("Eye separation used for VR debug windows in map elmos.");
 
 CONFIG(int, MinimizeOnFocusLoss).defaultValue(0).minimumValue(0).maximumValue(1).description("When set to 1 minimize Window if it loses key focus when in fullscreen mode.");
 

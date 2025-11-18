@@ -460,7 +460,7 @@ private:
 	bool enableVRDebugTargets = false;
 	bool debugTargetsDirty = false;
 	bool debugTargetsInitialized = false;
-	float debugEyeSeparation = 0.064f;
+	float debugEyeSeparation = 6.40f;
 	// tracking current debug draw state so FBO::Unbind can restore the correct target
 	mutable bool drawingToDebugTarget = false;
 	mutable uint32_t boundDebugFBO = 0;
