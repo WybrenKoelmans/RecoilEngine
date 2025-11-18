@@ -1506,6 +1506,18 @@ bool CGame::Draw() {
 		// restore back to the default FBO / Viewport
 		if (FBO::IsSupported())
 			FBO::Unbind();
+#ifndef HEADLESS
+		globalRendering->RefreshDebugRenderTargets();
+		const size_t debugTargetCount = globalRendering->GetDebugTargetCount();
+		for (size_t eyeIdx = 0; eyeIdx < debugTargetCount; ++eyeIdx) {
+			globalRendering->BindDebugTarget(eyeIdx);
+			worldDrawer.Draw();
+			worldDrawer.ResetMVPMatrices();
+			globalRendering->PresentDebugTarget(eyeIdx);
+		}
+		if (debugTargetCount > 0)
+			globalRendering->BindMainFramebuffer();
+#endif
 		camera->LoadViewport();
 
 		worldDrawer.Draw();

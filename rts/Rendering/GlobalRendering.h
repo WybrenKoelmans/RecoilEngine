@@ -13,6 +13,10 @@
 #include "System/UnorderedSet.hpp"
 #include "System/type2.h"
 
+#ifndef HEADLESS
+#include "Rendering/GL/FBO.h"
+#endif
+
 class SharedLib;
 struct SDL_version;
 struct SDL_Rect;
@@ -95,6 +99,15 @@ public:
 	void UpdateGLConfigs();
 	void UpdateGLGeometry();
 	void UpdateScreenMatrices();
+	void RefreshDebugRenderTargets();
+
+#ifndef HEADLESS
+	bool HasDebugTargets() const;
+	size_t GetDebugTargetCount() const;
+	void BindDebugTarget(size_t index);
+	void PresentDebugTarget(size_t index);
+	void BindMainFramebuffer() const;
+#endif
 
 	void LoadViewport();
 	void LoadDualViewport();
@@ -413,6 +426,24 @@ public:
 private:
 	void SetMinSampleShadingRate();
 	bool SetWindowMinMaximized(bool maximize) const;
+#ifndef HEADLESS
+	struct DebugRenderTarget {
+		FBO fbo;
+		GLuint colorTexture = 0;
+		int2 framebufferSize = {0, 0};
+		SDL_Window* window = nullptr;
+		SDL_GLContext context = nullptr;
+		std::string title;
+	};
+
+	bool InitDebugRenderTargets();
+	void DestroyDebugTargets();
+	void DestroyDebugRenderTargetResources(DebugRenderTarget& target);
+	bool CreateDebugRenderTargetResources(DebugRenderTarget& target);
+	bool CreateDebugWindow(DebugRenderTarget& target, size_t index);
+	void ResizeDebugTargets();
+	void PresentDebugTargetInternal(DebugRenderTarget& target);
+#endif
 private:
 	spring::unordered_set<std::string> glExtensions;
 	// double-buffered; results from frame N become available on frame N+1
@@ -420,6 +451,14 @@ private:
 private:
 	static constexpr inline const char* xsKeys[2] = { "XResolutionWindowed", "XResolution" };
 	static constexpr inline const char* ysKeys[2] = { "YResolutionWindowed", "YResolution" };
+
+#ifndef HEADLESS
+	std::array<DebugRenderTarget, 2> debugRenderTargets;
+	bool enableVRDebugTargets = false;
+	bool debugTargetsDirty = false;
+	bool debugTargetsInitialized = false;
+#endif
+	std::string mainWindowTitle;
 };
 
 extern CGlobalRendering* globalRendering;

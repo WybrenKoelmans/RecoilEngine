@@ -3,6 +3,8 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <array>
 
 #include <SDL.h>
 
@@ -17,6 +19,7 @@
 #include "Rendering/GL/glxHandler.h"
 #include "Rendering/UniformConstants.h"
 #include "Rendering/Fonts/glFont.h"
+#include "fmt/format.h"
 #include "Rendering/Models/ModelsMemStorage.h"
 #include "System/EventHandler.h"
 #include "System/type2.h"
@@ -67,6 +70,7 @@ CONFIG(bool, CompressTextures).defaultValue(false).safemodeValue(true).descripti
 CONFIG(bool, DualScreenMode).defaultValue(false).description("Sets whether to split the screen in half, with one half for minimap and one for main screen. Right side is for minimap unless DualScreenMiniMapOnLeft is set.");
 CONFIG(bool, DualScreenMiniMapOnLeft).defaultValue(false).description("When set, will make the left half of the screen the minimap when DualScreenMode is set.");
 CONFIG(bool, TeamNanoSpray).defaultValue(true).headlessValue(false);
+CONFIG(bool, VRDebugWindows).defaultValue(true).headlessValue(false).description("Creates debug windows for VR render targets.");
 
 CONFIG(int, MinimizeOnFocusLoss).defaultValue(0).minimumValue(0).maximumValue(1).description("When set to 1 minimize Window if it loses key focus when in fullscreen mode.");
 
@@ -342,6 +346,11 @@ CGlobalRendering::CGlobalRendering()
 	, borderless(configHandler->GetBool("WindowBorderless"))
 	, underExternalDebug(false)
 	, forceDWMFlush(configHandler->GetInt("DWMFlush"))
+#ifndef HEADLESS
+	, enableVRDebugTargets(configHandler->GetBool("VRDebugWindows"))
+	, debugTargetsDirty(true)
+	, debugTargetsInitialized(false)
+#endif
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
 	, glExtensions{}
@@ -367,7 +376,8 @@ CGlobalRendering::CGlobalRendering()
 		"YResolutionWindowed",
 		"WindowPosX",
 		"WindowPosY",
-		"MinSampleShadingRate"
+		"MinSampleShadingRate",
+		"VRDebugWindows"
 	});
 	SetDualScreenParams();
 }
@@ -570,6 +580,8 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 	if ((sdlWindow = CreateSDLWindow(title)) == nullptr)
 		return false;
 
+	mainWindowTitle = (title != nullptr) ? title : std::string();
+
 	if (configHandler->GetInt("MinimizeOnFocusLoss") == 0)
 		SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
 
@@ -617,6 +629,10 @@ void CGlobalRendering::MakeCurrentContext(bool clear) const {
 void CGlobalRendering::DestroyWindowAndContext() {
 	if (!sdlWindow)
 		return;
+
+#ifndef HEADLESS
+	DestroyDebugTargets();
+#endif
 
 	WindowManagerHelper::SetIconSurface(sdlWindow, nullptr);
 	SetWindowInputGrabbing(false);
@@ -1278,6 +1294,13 @@ void CGlobalRendering::ConfigNotify(const std::string& key, const std::string& v
 
 		return;
 	}
+#ifndef HEADLESS
+	if (key == "VRDebugWindows") {
+		enableVRDebugTargets = configHandler->GetBool("VRDebugWindows");
+		debugTargetsDirty = true;
+		return;
+	}
+#endif
 	winChgFrame = drawFrame + 1; //need to do on next frame since config mutex is locked inside ConfigNotify
 	forceDWMFlush = configHandler->GetInt("DWMFlush");
 }
@@ -1694,6 +1717,10 @@ void CGlobalRendering::UpdateGLGeometry()
 	UpdateViewPortGeometry();
 	UpdatePixelGeometry();
 	UpdateScreenMatrices();
+#ifndef HEADLESS
+	debugTargetsDirty = true;
+#endif
+	RefreshDebugRenderTargets();
 
 	LOG("[GR::%s][2] winSize=<%d,%d>", __func__, winSizeX, winSizeY);
 }
@@ -1706,7 +1733,6 @@ void CGlobalRendering::InitGLState()
 
 	glClearDepth(1.0f);
 	glDepthRange(0.0f, 1.0f);
-
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LEQUAL);
 
@@ -1732,6 +1758,291 @@ void CGlobalRendering::InitGLState()
 	// SwapBuffers(true, true);
 	LogDisplayMode(sdlWindow);
 }
+
+void CGlobalRendering::RefreshDebugRenderTargets()
+{
+#ifndef HEADLESS
+	if (!debugTargetsDirty)
+		return;
+
+	if (!Threading::IsMainThread())
+		return;
+
+	if (!enableVRDebugTargets) {
+		DestroyDebugTargets();
+		debugTargetsDirty = false;
+		return;
+	}
+
+	if (sdlWindow == nullptr || glContext == nullptr)
+		return;
+
+	if (viewSizeX <= 0 || viewSizeY <= 0)
+		return;
+
+	MakeCurrentContext(false);
+
+	if (!debugTargetsInitialized) {
+		debugTargetsInitialized = InitDebugRenderTargets();
+	} else {
+		ResizeDebugTargets();
+	}
+
+	debugTargetsDirty = false;
+#endif
+}
+
+#ifndef HEADLESS
+bool CGlobalRendering::HasDebugTargets() const
+{
+	return enableVRDebugTargets && debugTargetsInitialized && (GetDebugTargetCount() > 0);
+}
+
+size_t CGlobalRendering::GetDebugTargetCount() const
+{
+	if (!enableVRDebugTargets || !debugTargetsInitialized)
+		return 0;
+
+	size_t count = 0;
+	for (const auto& target : debugRenderTargets) {
+		if (target.fbo.IsValid())
+			++count;
+	}
+	return count;
+}
+
+void CGlobalRendering::BindDebugTarget(size_t index)
+{
+	if (!HasDebugTargets())
+		return;
+
+	if (index >= debugRenderTargets.size())
+		return;
+
+	auto& target = debugRenderTargets[index];
+	if (!target.fbo.IsValid())
+		return;
+
+	MakeCurrentContext(false);
+	target.fbo.Bind();
+	glViewport(0, 0, target.framebufferSize.x, target.framebufferSize.y);
+}
+
+void CGlobalRendering::PresentDebugTarget(size_t index)
+{
+	if (!HasDebugTargets())
+		return;
+
+	if (index >= debugRenderTargets.size())
+		return;
+
+	auto& target = debugRenderTargets[index];
+	if (!target.fbo.IsValid() || target.window == nullptr || target.context == nullptr)
+		return;
+
+	PresentDebugTargetInternal(target);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void CGlobalRendering::BindMainFramebuffer() const
+{
+	MakeCurrentContext(false);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+bool CGlobalRendering::InitDebugRenderTargets()
+{
+	size_t created = 0;
+
+	for (size_t i = 0; i < debugRenderTargets.size(); ++i) {
+		auto& target = debugRenderTargets[i];
+		if (!CreateDebugWindow(target, i))
+			continue;
+
+		if (!CreateDebugRenderTargetResources(target)) {
+			DestroyDebugRenderTargetResources(target);
+			if (target.context != nullptr) {
+				SDL_GL_DeleteContext(target.context);
+				target.context = nullptr;
+			}
+			if (target.window != nullptr) {
+				SDL_DestroyWindow(target.window);
+				target.window = nullptr;
+			}
+			continue;
+		}
+
+		++created;
+	}
+
+	return (created > 0);
+}
+
+void CGlobalRendering::DestroyDebugTargets()
+{
+	MakeCurrentContext(false);
+
+	for (auto& target : debugRenderTargets) {
+		DestroyDebugRenderTargetResources(target);
+		if (target.context != nullptr && target.window != nullptr)
+			SDL_GL_MakeCurrent(target.window, nullptr);
+
+		if (target.context != nullptr) {
+			SDL_GL_DeleteContext(target.context);
+			target.context = nullptr;
+		}
+		if (target.window != nullptr) {
+			SDL_DestroyWindow(target.window);
+			target.window = nullptr;
+		}
+		target.title.clear();
+	}
+
+	debugTargetsInitialized = false;
+}
+
+void CGlobalRendering::DestroyDebugRenderTargetResources(DebugRenderTarget& target)
+{
+	if (target.colorTexture != 0) {
+		glDeleteTextures(1, &target.colorTexture);
+		target.colorTexture = 0;
+	}
+
+	if (target.fbo.IsValid())
+		target.fbo.Kill();
+
+	target.framebufferSize = {0, 0};
+}
+
+bool CGlobalRendering::CreateDebugRenderTargetResources(DebugRenderTarget& target)
+{
+	DestroyDebugRenderTargetResources(target);
+	target.fbo.Init(false);
+	target.framebufferSize = {viewSizeX, viewSizeY};
+
+	glGenTextures(1, &target.colorTexture);
+	glBindTexture(GL_TEXTURE_2D, target.colorTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, target.framebufferSize.x, target.framebufferSize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+	target.fbo.Bind();
+	target.fbo.AttachTexture(target.colorTexture, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0_EXT);
+	target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, target.framebufferSize.x, target.framebufferSize.y);
+
+	const GLenum drawBuf = GL_COLOR_ATTACHMENT0_EXT;
+	glDrawBuffers(1, &drawBuf);
+
+	const bool valid = target.fbo.CheckStatus(target.title.empty() ? "VRDebugTarget" : target.title.c_str());
+	target.fbo.Unbind();
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	if (!valid) {
+		DestroyDebugRenderTargetResources(target);
+		return false;
+	}
+
+	return true;
+}
+
+bool CGlobalRendering::CreateDebugWindow(DebugRenderTarget& target, size_t index)
+{
+	if (target.window != nullptr && target.context != nullptr)
+		return true;
+
+	const int defaultWidth = std::max(1, viewSizeX / 2);
+	const int defaultHeight = std::max(1, viewSizeY / 2);
+
+	const std::array<const char*, 2> eyeLabels = {"Left Eye", "Right Eye"};
+	const std::string baseTitle = mainWindowTitle.empty() ? std::string("Recoil") : mainWindowTitle;
+	if (index < eyeLabels.size())
+		target.title = fmt::format("{} [{}]", baseTitle, eyeLabels[index]);
+	else
+		target.title = fmt::format("{} [Eye {}]", baseTitle, index + 1);
+
+	const int offsetX = winPosX + winSizeX + 40;
+	const int offsetY = winPosY + 40 + static_cast<int>(index) * (defaultHeight + 20);
+
+	Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+	target.window = SDL_CreateWindow(target.title.c_str(), offsetX, offsetY, defaultWidth, defaultHeight, flags);
+	if (target.window == nullptr) {
+		LOG_L(L_WARNING, "[GR::%s] failed to create VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
+		return false;
+	}
+
+	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+	target.context = SDL_GL_CreateContext(target.window);
+	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+
+	if (target.context == nullptr) {
+		LOG_L(L_WARNING, "[GR::%s] failed to create GL context for VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
+		SDL_DestroyWindow(target.window);
+		target.window = nullptr;
+		return false;
+	}
+
+	SDL_GL_MakeCurrent(target.window, target.context);
+	SDL_GL_SetSwapInterval(0);
+	SDL_ShowWindow(target.window);
+	SDL_GL_MakeCurrent(sdlWindow, glContext);
+
+	return true;
+}
+
+void CGlobalRendering::ResizeDebugTargets()
+{
+	size_t readyTargets = 0;
+
+	for (size_t i = 0; i < debugRenderTargets.size(); ++i) {
+		auto& target = debugRenderTargets[i];
+		if (target.window == nullptr || target.context == nullptr) {
+			if (!CreateDebugWindow(target, i))
+				continue;
+		}
+
+		const bool needsResize = (target.framebufferSize.x != viewSizeX) || (target.framebufferSize.y != viewSizeY);
+		const bool needsRebuild = !target.fbo.IsValid() || target.colorTexture == 0;
+		if (needsResize || needsRebuild) {
+			if (!CreateDebugRenderTargetResources(target))
+				continue;
+		}
+
+		const int newWidth = std::max(1, viewSizeX / 2);
+		const int newHeight = std::max(1, viewSizeY / 2);
+		SDL_SetWindowSize(target.window, newWidth, newHeight);
+		const int offsetX = winPosX + winSizeX + 40;
+		const int offsetY = winPosY + 40 + static_cast<int>(i) * (newHeight + 20);
+		SDL_SetWindowPosition(target.window, offsetX, offsetY);
+
+		++readyTargets;
+	}
+
+	debugTargetsInitialized = (readyTargets > 0);
+}
+
+void CGlobalRendering::PresentDebugTargetInternal(DebugRenderTarget& target)
+{
+	glFlush();
+	SDL_GL_MakeCurrent(target.window, target.context);
+
+	int wndW = 0;
+	int wndH = 0;
+	SDL_GetWindowSize(target.window, &wndW, &wndH);
+	wndW = std::max(wndW, 1);
+	wndH = std::max(wndH, 1);
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, target.fbo.GetId());
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	glViewport(0, 0, wndW, wndH);
+	glBlitFramebuffer(0, 0, target.framebufferSize.x, target.framebufferSize.y, 0, 0, wndW, wndH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	SDL_GL_SwapWindow(target.window);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	SDL_GL_MakeCurrent(sdlWindow, glContext);
+}
+#endif
 
 void CGlobalRendering::ToggleMultisampling() const
 {
