@@ -15,6 +15,20 @@
 
 #ifndef HEADLESS
 #include "Rendering/GL/FBO.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <unknwn.h>
+#define XR_USE_PLATFORM_WIN32
+#define XR_USE_GRAPHICS_API_OPENGL
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#endif
 #endif
 
 class SharedLib;
@@ -100,6 +114,15 @@ public:
 	void UpdateGLGeometry();
 	void UpdateScreenMatrices();
 	void RefreshDebugRenderTargets();
+
+#if !defined(HEADLESS) && defined(_WIN32)
+	bool InitOpenXR();
+	void PollOpenXREvents();
+	void BeginVRFrame();
+	void EndVRFrame();
+	bool IsVRActive() const { return xrSessionRunning; }
+	const XrView& GetVRView(size_t index) const { return xrViews[index]; }
+#endif
 
 #ifndef HEADLESS
 	bool HasDebugTargets() const;
@@ -464,6 +487,26 @@ private:
 	// tracking current debug draw state so FBO::Unbind can restore the correct target
 	mutable bool drawingToDebugTarget = false;
 	mutable uint32_t boundDebugFBO = 0;
+
+#ifdef _WIN32
+	XrInstance xrInstance = XR_NULL_HANDLE;
+	XrSystemId xrSystemId = XR_NULL_SYSTEM_ID;
+	XrSession xrSession = XR_NULL_HANDLE;
+	XrSpace xrAppSpace = XR_NULL_HANDLE;
+
+	struct XrSwapchainData {
+		XrSwapchain handle;
+		int32_t width;
+		int32_t height;
+		std::vector<XrSwapchainImageOpenGLKHR> images;
+	};
+	std::vector<XrSwapchainData> xrSwapchains;
+	std::vector<XrView> xrViews;
+	std::vector<XrViewConfigurationView> xrConfigViews;
+	XrFrameState xrFrameState{XR_TYPE_FRAME_STATE};
+	bool xrSessionRunning = false;
+	bool xrSessionReady = false;
+#endif
 #endif
 	std::string mainWindowTitle;
 };

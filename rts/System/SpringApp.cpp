@@ -865,6 +865,11 @@ void SpringApp::Reload(const std::string script)
  */
 bool SpringApp::Update()
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	globalRendering->PollOpenXREvents();
+	globalRendering->BeginVRFrame();
+#endif
+
 	bool retc = true;
 	bool swap = true;
 
@@ -886,6 +891,10 @@ bool SpringApp::Update()
 	auto lock = CLoadLock::GetUniqueLock();
 	swap = (retc && activeController != nullptr && activeController->Draw());
 	#endif
+
+#if !defined(HEADLESS) && defined(_WIN32)
+	globalRendering->EndVRFrame();
+#endif
 
 	// always swap by default, not doing so can upset some drivers
 	globalRendering->SwapBuffers(swap, false);

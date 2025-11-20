@@ -1509,13 +1509,35 @@ bool CGame::Draw() {
 			const float centerIndex = (debugTargetCount - 1) * 0.5f;
 			const float3 baseCameraPos = camera->GetPos();
 			const float3 cameraRight = camera->GetRight();
+			const float3 baseCameraRot = camera->GetRot();
 
 			// use mirrored camera offsets so the debug windows show a stereo pair
 			for (size_t eyeIdx = 0; eyeIdx < debugTargetCount; ++eyeIdx) {
-				const float offsetFactor = static_cast<float>(eyeIdx) - centerIndex;
-				const float3 eyePos = baseCameraPos + (cameraRight * (offsetFactor * baseSeparation));
+				float3 eyePos;
+				float3 eyeRot = baseCameraRot;
+
+#if defined(_WIN32)
+				if (globalRendering->IsVRActive()) {
+					const auto& view = globalRendering->GetVRView(eyeIdx);
+					const auto& pose = view.pose;
+
+					CQuaternion xrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+					float3 xrPos(pose.position.x, pose.position.y, pose.position.z);
+
+					CQuaternion baseQ = CQuaternion::FromEulerPYR(baseCameraRot);
+					float3 rotatedPos = baseQ.Rotate(xrPos);
+
+					eyePos = baseCameraPos + rotatedPos;
+					eyeRot = (baseQ * xrRot).ToEulerPYR();
+				} else
+#endif
+				{
+					const float offsetFactor = static_cast<float>(eyeIdx) - centerIndex;
+					eyePos = baseCameraPos + (cameraRight * (offsetFactor * baseSeparation));
+				}
 
 				camera->SetPos(eyePos);
+				camera->SetRot(eyeRot);
 				camera->Update(false, true, false, false);
 				UniformConstants::GetInstance().UpdateMatrices();
 
@@ -1526,6 +1548,7 @@ bool CGame::Draw() {
 			}
 
 			camera->SetPos(baseCameraPos);
+			camera->SetRot(baseCameraRot);
 			camera->Update(false, true, false, false);
 			UniformConstants::GetInstance().UpdateMatrices();
 			globalRendering->BindMainFramebuffer();
@@ -1897,6 +1920,7 @@ void CGame::GameEnd(const std::vector<unsigned char>& winningAllyTeams, bool tim
 		return;
 
 	// Write CPlayer::Statistics and CTeam::Statistics to demo
+
 	// TODO: move this to a method in CTeamHandler
 	const int numPlayers = playerHandler.ActivePlayers();
 	const int numTeams = teamHandler.ActiveTeams() - int(gs->useLuaGaia);

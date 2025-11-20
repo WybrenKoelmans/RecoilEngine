@@ -36,6 +36,7 @@ endif()
 
 ### give error when not found
 find_package_static(DevIL REQUIRED)
+find_package(OpenXR REQUIRED)
 
 ### Assemble common include dirs
 include_directories(BEFORE lib)
@@ -85,7 +86,7 @@ find_package_static(ZLIB 1.2.7 REQUIRED)
 list(APPEND engineCommonLibraries DevIL::IL)
 list(APPEND engineCommonLibraries 7zip prd::jsoncpp ${SPRING_MINIZIP_LIBRARY} ZLIB::ZLIB Tracy::TracyClient)
 list(APPEND engineCommonLibraries lua luasocket archives assimp simdjson::simdjson fastgltf
-	gflags_nothreads_static)
+	gflags_nothreads_static OpenXR::openxr_loader)
 if(CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
 	list(APPEND engineCommonLibraries execinfo)
 endif(CMAKE_SYSTEM_NAME MATCHES "OpenBSD")

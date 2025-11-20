@@ -1802,11 +1802,18 @@ void CGlobalRendering::RefreshDebugRenderTargets()
 #ifndef HEADLESS
 bool CGlobalRendering::HasDebugTargets() const
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	if (xrSessionRunning) return true;
+#endif
 	return enableVRDebugTargets && debugTargetsInitialized && (GetDebugTargetCount() > 0);
 }
 
 size_t CGlobalRendering::GetDebugTargetCount() const
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	if (xrSessionRunning) return xrViews.size();
+#endif
+
 	if (!enableVRDebugTargets || !debugTargetsInitialized)
 		return 0;
 
@@ -1820,6 +1827,27 @@ size_t CGlobalRendering::GetDebugTargetCount() const
 
 void CGlobalRendering::BindDebugTarget(size_t index)
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	if (xrSessionRunning && index < xrSwapchains.size()) {
+		XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+		uint32_t imageIndex;
+		xrAcquireSwapchainImage(xrSwapchains[index].handle, &acquireInfo, &imageIndex);
+
+		XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+		waitInfo.timeout = XR_INFINITE_DURATION;
+		xrWaitSwapchainImage(xrSwapchains[index].handle, &waitInfo);
+
+		auto& target = debugRenderTargets[index];
+		target.fbo.Bind();
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, xrSwapchains[index].images[imageIndex].image, 0);
+		
+		glViewport(0, 0, xrSwapchains[index].width, xrSwapchains[index].height);
+		drawingToDebugTarget = true;
+		boundDebugFBO = target.fbo.GetId();
+		return;
+	}
+#endif
+
 	if (!HasDebugTargets())
 		return;
 
@@ -1839,6 +1867,18 @@ void CGlobalRendering::BindDebugTarget(size_t index)
 
 void CGlobalRendering::PresentDebugTarget(size_t index)
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	if (xrSessionRunning && index < xrSwapchains.size()) {
+		XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+		xrReleaseSwapchainImage(xrSwapchains[index].handle, &releaseInfo);
+
+		drawingToDebugTarget = false;
+		boundDebugFBO = 0;
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		return;
+	}
+#endif
+
 	if (!HasDebugTargets())
 		return;
 
@@ -1866,6 +1906,23 @@ void CGlobalRendering::BindMainFramebuffer() const
 
 bool CGlobalRendering::InitDebugRenderTargets()
 {
+#if !defined(HEADLESS) && defined(_WIN32)
+	if (InitOpenXR()) {
+		// Initialize FBOs for OpenXR swapchains
+		for (size_t i = 0; i < std::min(debugRenderTargets.size(), xrSwapchains.size()); ++i) {
+			auto& target = debugRenderTargets[i];
+			target.fbo.Init(false);
+			target.framebufferSize = {xrSwapchains[i].width, xrSwapchains[i].height};
+			
+			target.fbo.Bind();
+			// Create depth buffer
+			target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, target.framebufferSize.x, target.framebufferSize.y);
+			target.fbo.Unbind();
+		}
+		return true;
+	}
+#endif
+
 	size_t created = 0;
 
 	for (size_t i = 0; i < debugRenderTargets.size(); ++i) {
@@ -2371,3 +2428,176 @@ void CGlobalRendering::LoadDualViewport()
 {
 	glViewport(dualViewPosX, dualViewPosY, dualViewSizeX, dualViewSizeY);
 }
+
+#if !defined(HEADLESS) && defined(_WIN32)
+
+bool CGlobalRendering::InitOpenXR()
+{
+	if (xrInstance != XR_NULL_HANDLE) return true;
+
+	LOG("[GR::%s] Initializing OpenXR...", __func__);
+
+	std::vector<const char*> extensions;
+	extensions.push_back(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+
+	XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
+	strcpy(createInfo.applicationInfo.applicationName, "Recoil Engine");
+	createInfo.applicationInfo.applicationVersion = 1;
+	strcpy(createInfo.applicationInfo.engineName, "Recoil");
+	createInfo.applicationInfo.engineVersion = 1;
+	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+	createInfo.enabledExtensionCount = (uint32_t)extensions.size();
+	createInfo.enabledExtensionNames = extensions.data();
+
+	if (xrCreateInstance(&createInfo, &xrInstance) != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR instance", __func__);
+		return false;
+	}
+
+	XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
+	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+	if (xrGetSystem(xrInstance, &systemInfo, &xrSystemId) != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to get OpenXR system", __func__);
+		return false;
+	}
+
+	XrGraphicsRequirementsOpenGLKHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};
+	PFN_xrGetOpenGLGraphicsRequirementsKHR pfnGetOpenGLGraphicsRequirementsKHR = nullptr;
+	xrGetInstanceProcAddr(xrInstance, "xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction*)&pfnGetOpenGLGraphicsRequirementsKHR);
+	if (pfnGetOpenGLGraphicsRequirementsKHR) {
+		pfnGetOpenGLGraphicsRequirementsKHR(xrInstance, xrSystemId, &graphicsRequirements);
+	}
+
+	XrGraphicsBindingOpenGLWin32KHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR};
+	graphicsBinding.hDC = wglGetCurrentDC();
+	graphicsBinding.hGLRC = wglGetCurrentContext();
+
+	XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+	sessionCreateInfo.next = &graphicsBinding;
+	sessionCreateInfo.systemId = xrSystemId;
+
+	if (xrCreateSession(xrInstance, &sessionCreateInfo, &xrSession) != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR session", __func__);
+		return false;
+	}
+
+	XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+	spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+	spaceCreateInfo.poseInReferenceSpace.orientation.w = 1.0f;
+	xrCreateReferenceSpace(xrSession, &spaceCreateInfo, &xrAppSpace);
+
+	uint32_t viewCount = 0;
+	xrEnumerateViewConfigurationViews(xrInstance, xrSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr);
+	xrConfigViews.resize(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+	xrEnumerateViewConfigurationViews(xrInstance, xrSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, xrConfigViews.data());
+
+	xrViews.resize(viewCount, {XR_TYPE_VIEW});
+	xrSwapchains.resize(viewCount);
+
+	for (uint32_t i = 0; i < viewCount; i++) {
+		XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+		swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+		swapchainCreateInfo.format = GL_RGBA8;
+		swapchainCreateInfo.sampleCount = 1;
+		swapchainCreateInfo.width = xrConfigViews[i].recommendedImageRectWidth;
+		swapchainCreateInfo.height = xrConfigViews[i].recommendedImageRectHeight;
+		swapchainCreateInfo.faceCount = 1;
+		swapchainCreateInfo.arraySize = 1;
+		swapchainCreateInfo.mipCount = 1;
+
+		xrSwapchains[i].width = swapchainCreateInfo.width;
+		xrSwapchains[i].height = swapchainCreateInfo.height;
+
+		if (xrCreateSwapchain(xrSession, &swapchainCreateInfo, &xrSwapchains[i].handle) != XR_SUCCESS) {
+			LOG_L(L_ERROR, "[GR::%s] Failed to create swapchain %d", __func__, i);
+			return false;
+		}
+
+		uint32_t imageCount = 0;
+		xrEnumerateSwapchainImages(xrSwapchains[i].handle, 0, &imageCount, nullptr);
+		xrSwapchains[i].images.resize(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR});
+		xrEnumerateSwapchainImages(xrSwapchains[i].handle, imageCount, &imageCount, (XrSwapchainImageBaseHeader*)xrSwapchains[i].images.data());
+	}
+
+	LOG("[GR::%s] OpenXR initialized successfully", __func__);
+	return true;
+}
+
+void CGlobalRendering::PollOpenXREvents()
+{
+	if (xrInstance == XR_NULL_HANDLE) return;
+
+	XrEventDataBuffer eventData{XR_TYPE_EVENT_DATA_BUFFER};
+	while (xrPollEvent(xrInstance, &eventData) == XR_SUCCESS) {
+		if (eventData.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+			auto* sessionStateChanged = (XrEventDataSessionStateChanged*)&eventData;
+			if (sessionStateChanged->session == xrSession) {
+				if (sessionStateChanged->state == XR_SESSION_STATE_READY) {
+					XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
+					beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+					xrBeginSession(xrSession, &beginInfo);
+					xrSessionRunning = true;
+				} else if (sessionStateChanged->state == XR_SESSION_STATE_STOPPING) {
+					xrEndSession(xrSession);
+					xrSessionRunning = false;
+				}
+			}
+		}
+		eventData.type = XR_TYPE_EVENT_DATA_BUFFER;
+		eventData.next = nullptr;
+	}
+}
+
+void CGlobalRendering::BeginVRFrame()
+{
+	if (!xrSessionRunning) return;
+
+	XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
+	xrWaitFrame(xrSession, &waitInfo, &xrFrameState);
+
+	XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+	xrBeginFrame(xrSession, &beginInfo);
+
+	if (xrFrameState.shouldRender) {
+		XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+		viewLocateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+		viewLocateInfo.displayTime = xrFrameState.predictedDisplayTime;
+		viewLocateInfo.space = xrAppSpace;
+
+		uint32_t viewCountOutput;
+		XrViewState viewState{XR_TYPE_VIEW_STATE};
+		xrLocateViews(xrSession, &viewLocateInfo, &viewState, (uint32_t)xrViews.size(), &viewCountOutput, xrViews.data());
+	}
+}
+
+void CGlobalRendering::EndVRFrame()
+{
+	if (!xrSessionRunning) return;
+
+	std::vector<XrCompositionLayerProjectionView> projectionViews(xrViews.size());
+	for (size_t i = 0; i < xrViews.size(); ++i) {
+		projectionViews[i].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+		projectionViews[i].pose = xrViews[i].pose;
+		projectionViews[i].fov = xrViews[i].fov;
+		projectionViews[i].subImage.swapchain = xrSwapchains[i].handle;
+		projectionViews[i].subImage.imageRect = {0, 0, xrSwapchains[i].width, xrSwapchains[i].height};
+		projectionViews[i].subImage.imageArrayIndex = 0;
+	}
+
+	XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+	layer.space = xrAppSpace;
+	layer.viewCount = (uint32_t)projectionViews.size();
+	layer.views = projectionViews.data();
+
+	const XrCompositionLayerBaseHeader* layers[] = { (XrCompositionLayerBaseHeader*)&layer };
+
+	XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
+	endInfo.displayTime = xrFrameState.predictedDisplayTime;
+	endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	endInfo.layerCount = xrFrameState.shouldRender ? 1 : 0;
+	endInfo.layers = layers;
+
+	xrEndFrame(xrSession, &endInfo);
+}
+
+#endif
