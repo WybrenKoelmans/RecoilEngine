@@ -122,6 +122,7 @@ public:
 	void EndVRFrame();
 	bool IsVRActive() const { return xrSessionRunning; }
 	const XrView& GetVRView(size_t index) const { return xrViews[index]; }
+	int2 GetVRViewSize(size_t index) const;
 #endif
 
 #ifndef HEADLESS

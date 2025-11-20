@@ -11,7 +11,7 @@ public:
 	void Kill();
 
 	void Update(bool newSimFrame);
-	void Draw(bool isMainDraw = true) const;
+	void Draw(bool isMainDraw = true, bool updateCamera = true) const;
 
 	void GenerateIBLTextures() const;
 	void ResetMVPMatrices() const;

@@ -295,7 +295,7 @@ void CWorldDrawer::ResetMVPMatrices() const
 
 
 
-void CWorldDrawer::Draw(bool isMainDraw) const
+void CWorldDrawer::Draw(bool isMainDraw, bool updateCamera) const
 {
 	SCOPED_TIMER("Draw::World");
 	SCOPED_GL_DEBUGGROUP("Draw::World");
@@ -320,10 +320,14 @@ void CWorldDrawer::Draw(bool isMainDraw) const
 		GenerateIBLTextures();
 		// For main draw, update camera fully (including viewport) to match globalRendering settings
 		camera->Update();
-	} else {
+	} else if (updateCamera) {
 		// For auxiliary debug draws: ensure matrices reflect current camera pos/rot but do not overwrite viewport.
 		// Use reduced update to avoid glViewport call.
 		camera->Update(false, true, false, false); // update mats & frustum only
+		// Clear color buffer as well so debug FBO shows consistent background.
+		glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
+		glClear(GL_COLOR_BUFFER_BIT); // depth/stencil cleared earlier
+	} else {
 		// Clear color buffer as well so debug FBO shows consistent background.
 		glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
 		glClear(GL_COLOR_BUFFER_BIT); // depth/stencil cleared earlier

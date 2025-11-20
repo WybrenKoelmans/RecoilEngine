@@ -48,6 +48,7 @@
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/TeamHighlight.h"
 #include "Rendering/Units/UnitDrawer.h"
+#include "System/Quaternion.h"
 #include "Rendering/UniformConstants.h"
 #include "Rendering/Map/InfoTexture/IInfoTextureHandler.h"
 #include "Rendering/Textures/NamedTextures.h"
@@ -1520,6 +1521,7 @@ bool CGame::Draw() {
 				if (globalRendering->IsVRActive()) {
 					const auto& view = globalRendering->GetVRView(eyeIdx);
 					const auto& pose = view.pose;
+					const auto& fov = view.fov;
 
 					CQuaternion xrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
 					float3 xrPos(pose.position.x, pose.position.y, pose.position.z);
@@ -1529,27 +1531,158 @@ bool CGame::Draw() {
 
 					eyePos = baseCameraPos + rotatedPos;
 					eyeRot = (baseQ * xrRot).ToEulerPYR();
+					eyeRot.x *= -1.0f; // Invert pitch to match engine coordinate system
+
+					// Update viewport to match VR swapchain
+					int2 viewSize = globalRendering->GetVRViewSize(eyeIdx);
+					camera->UpdateViewPort(0, 0, viewSize.x, viewSize.y);
+
+					LOG_L(L_WARNING, "[VR_DEBUG] Eye %d: ViewSize=%dx%d", (int)eyeIdx, viewSize.x, viewSize.y);
+					LOG_L(L_WARNING, "[VR_DEBUG] Eye %d: BasePos=%f,%f,%f BaseRot=%f,%f,%f", (int)eyeIdx, baseCameraPos.x, baseCameraPos.y, baseCameraPos.z, baseCameraRot.x, baseCameraRot.y, baseCameraRot.z);
+					LOG_L(L_WARNING, "[VR_DEBUG] Eye %d: XRPos=%f,%f,%f XRRot=%f,%f,%f,%f", (int)eyeIdx, xrPos.x, xrPos.y, xrPos.z, pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+					LOG_L(L_WARNING, "[VR_DEBUG] Eye %d: FinalPos=%f,%f,%f FinalRot=%f,%f,%f", (int)eyeIdx, eyePos.x, eyePos.y, eyePos.z, eyeRot.x, eyeRot.y, eyeRot.z);
+
+					// Calculate Projection Matrix from OpenXR FOV
+					float tanLeft = tan(fov.angleLeft);
+					float tanRight = tan(fov.angleRight);
+					float tanDown = tan(fov.angleDown);
+					float tanUp = tan(fov.angleUp);
+
+					float width = tanRight - tanLeft;
+					float height = tanUp - tanDown;
+
+					LOG_L(L_WARNING, "[VR] Eye %d FOV: L=%f R=%f U=%f D=%f | W=%f H=%f | Viewport: %dx%d", (int)eyeIdx, fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown, width, height, viewSize.x, viewSize.y);
+
+					float nearZ = CGlobalRendering::MIN_ZNEAR_DIST;
+					float farZ = CGlobalRendering::MAX_VIEW_RANGE;
+
+					CMatrix44f proj;
+					proj[0] = 2.0f / width;
+					proj[4] = 0.0f;
+					proj[8] = (tanRight + tanLeft) / width;
+					proj[12] = 0.0f;
+
+					proj[1] = 0.0f;
+					proj[5] = 2.0f / height;
+					proj[9] = (tanUp + tanDown) / height;
+					proj[13] = 0.0f;
+
+					LOG_L(L_WARNING, "[VR] Eye %d Proj: [0]=%f [5]=%f [8]=%f [9]=%f [10]=%f [14]=%f", (int)eyeIdx, proj[0], proj[5], proj[8], proj[9], proj[10], proj[14]);
+
+					proj[2] = 0.0f;
+					proj[6] = 0.0f;
+					if (globalRendering->supportClipSpaceControl) {
+						// [0, 1] Z range for glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE)
+						proj[10] = -farZ / (farZ - nearZ);
+						proj[14] = -farZ * nearZ / (farZ - nearZ);
+					} else {
+						// [-1, 1] Z range for standard GL
+						proj[10] = -(farZ + nearZ) / (farZ - nearZ);
+						proj[14] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
+					}
+
+					proj[3] = 0.0f;
+					proj[7] = 0.0f;
+					proj[11] = -1.0f;
+					proj[15] = 0.0f;
+
+					camera->SetPos(eyePos);
+					camera->SetRot(eyeRot);
+					camera->Update(false, true, false, false);
+					camera->SetProjectionMatrix(proj);
+					UniformConstants::GetInstance().UpdateMatrices();
+
+					globalRendering->BindDebugTarget(eyeIdx);
+					
+					// Explicitly disable scissor and clip planes to prevent clipping issues
+					glDisable(GL_SCISSOR_TEST);
+					glDisable(GL_CLIP_PLANE0);
+					glDisable(GL_CLIP_PLANE1);
+					glDisable(GL_CLIP_PLANE2);
+					glDisable(GL_CLIP_PLANE3);
+
+					// Ensure viewport is set correctly for the current context
+					glViewport(0, 0, viewSize.x, viewSize.y);
+
+					// glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT); // Handled by WorldDrawer
+					worldDrawer.Draw(false, false);
+
+					// DEBUG: Draw red quad at top-left and green quad at center
+					{
+						glMatrixMode(GL_PROJECTION);
+						glPushMatrix();
+						glLoadIdentity();
+						glMatrixMode(GL_MODELVIEW);
+						glPushMatrix();
+						glLoadIdentity();
+
+						glPushAttrib(GL_ALL_ATTRIB_BITS);
+						glDisable(GL_DEPTH_TEST);
+						glDisable(GL_CULL_FACE);
+						glDisable(GL_TEXTURE_2D);
+						glDisable(GL_LIGHTING);
+						glDisable(GL_BLEND);
+
+						glBegin(GL_QUADS);
+							// Red quad at top-left
+							glColor3f(1.0f, 0.0f, 0.0f);
+							glVertex2f(-1.0f, 1.0f);
+							glVertex2f(-0.9f, 1.0f);
+							glVertex2f(-0.9f, 0.9f);
+							glVertex2f(-1.0f, 0.9f);
+
+							// Green quad at center
+							glColor3f(0.0f, 1.0f, 0.0f);
+							glVertex2f(-0.05f, 0.05f);
+							glVertex2f( 0.05f, 0.05f);
+							glVertex2f( 0.05f, -0.05f);
+							glVertex2f(-0.05f, -0.05f);
+						glEnd();
+
+						glPopAttrib();
+						glPopMatrix();
+						glMatrixMode(GL_PROJECTION);
+						glPopMatrix();
+						glMatrixMode(GL_MODELVIEW);
+
+						// Sample pixels
+						if (viewSize.x > 0 && viewSize.y > 0) {
+							unsigned char pixel[4];
+							
+							// Center
+							glReadPixels(viewSize.x / 2, viewSize.y / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+							LOG_L(L_WARNING, "[VR_DEBUG] Eye %d Center Pixel (Green?): R=%d G=%d B=%d A=%d", (int)eyeIdx, pixel[0], pixel[1], pixel[2], pixel[3]);
+
+							// Top-Left (approx)
+							glReadPixels(viewSize.x * 0.05f, viewSize.y * 0.95f, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+							LOG_L(L_WARNING, "[VR_DEBUG] Eye %d Top-Left Pixel (Red?): R=%d G=%d B=%d A=%d", (int)eyeIdx, pixel[0], pixel[1], pixel[2], pixel[3]);
+						}
+					}
+
+					worldDrawer.ResetMVPMatrices();
+					globalRendering->PresentDebugTarget(eyeIdx);
 				} else
 #endif
 				{
 					const float offsetFactor = static_cast<float>(eyeIdx) - centerIndex;
 					eyePos = baseCameraPos + (cameraRight * (offsetFactor * baseSeparation));
+
+					camera->SetPos(eyePos);
+					camera->SetRot(eyeRot);
+					camera->Update(false, true, false, false);
+					UniformConstants::GetInstance().UpdateMatrices();
+
+					globalRendering->BindDebugTarget(eyeIdx);
+					worldDrawer.Draw(false);
+					worldDrawer.ResetMVPMatrices();
+					globalRendering->PresentDebugTarget(eyeIdx);
 				}
-
-				camera->SetPos(eyePos);
-				camera->SetRot(eyeRot);
-				camera->Update(false, true, false, false);
-				UniformConstants::GetInstance().UpdateMatrices();
-
-				globalRendering->BindDebugTarget(eyeIdx);
-				worldDrawer.Draw(false);
-				worldDrawer.ResetMVPMatrices();
-				globalRendering->PresentDebugTarget(eyeIdx);
 			}
 
 			camera->SetPos(baseCameraPos);
 			camera->SetRot(baseCameraRot);
-			camera->Update(false, true, false, false);
+			// Restore viewport from global config
+			camera->Update(false, true, true, false);
 			UniformConstants::GetInstance().UpdateMatrices();
 			globalRendering->BindMainFramebuffer();
 		}

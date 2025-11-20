@@ -121,6 +121,13 @@ public:
 		Update({updateDirs, updateMats, true, updateViewPort, updateViewRange});
 	}
 
+	void SetProjectionMatrix(const CMatrix44f& mat) {
+		projectionMatrix = mat;
+		viewProjectionMatrix = projectionMatrix * viewMatrix;
+		projectionMatrixInverse = projectionMatrix.Invert();
+		viewProjectionMatrixInverse = viewProjectionMatrix.Invert();
+	}
+
 	/// @param fov in degree
 	void SetPos(const float3& p) { pos = p; }
 	void SetDir(const float3& dir);

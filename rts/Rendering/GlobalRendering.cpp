@@ -1838,10 +1838,20 @@ void CGlobalRendering::BindDebugTarget(size_t index)
 		xrWaitSwapchainImage(xrSwapchains[index].handle, &waitInfo);
 
 		auto& target = debugRenderTargets[index];
+
+		// Ensure depth buffer matches VR swapchain size
+		if (target.framebufferSize.x != xrSwapchains[index].width || target.framebufferSize.y != xrSwapchains[index].height) {
+			target.framebufferSize = {xrSwapchains[index].width, xrSwapchains[index].height};
+			target.fbo.Bind();
+			// Re-create depth buffer with new size
+			target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, target.framebufferSize.x, target.framebufferSize.y);
+		}
+
 		target.fbo.Bind();
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, xrSwapchains[index].images[imageIndex].image, 0);
 		
 		glViewport(0, 0, xrSwapchains[index].width, xrSwapchains[index].height);
+		glDisable(GL_SCISSOR_TEST);
 		drawingToDebugTarget = true;
 		boundDebugFBO = target.fbo.GetId();
 		return;
@@ -2634,6 +2644,8 @@ bool CGlobalRendering::InitOpenXR()
 		xrSwapchains[i].width = swapchainCreateInfo.width;
 		xrSwapchains[i].height = swapchainCreateInfo.height;
 
+		LOG("[GR::%s] Swapchain %d dimensions: %dx%d", __func__, i, xrSwapchains[i].width, xrSwapchains[i].height);
+
 		res = xrCreateSwapchain(xrSession, &swapchainCreateInfo, &xrSwapchains[i].handle);
 		if (res != XR_SUCCESS) {
 			LOG_L(L_ERROR, "[GR::%s] Failed to create swapchain %d: %s (%d)", __func__, i, GetXrResultString(res), res);
@@ -2725,6 +2737,14 @@ void CGlobalRendering::EndVRFrame()
 	endInfo.layers = layers;
 
 	xrEndFrame(xrSession, &endInfo);
+}
+
+int2 CGlobalRendering::GetVRViewSize(size_t index) const
+{
+	if (index < xrSwapchains.size()) {
+		return { (int)xrSwapchains[index].width, (int)xrSwapchains[index].height };
+	}
+	return {0, 0};
 }
 
 #endif
