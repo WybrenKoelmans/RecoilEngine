@@ -5,6 +5,8 @@
 #include <iomanip>
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <vector>
 
 #include <SDL.h>
 
@@ -70,8 +72,7 @@ CONFIG(bool, CompressTextures).defaultValue(false).safemodeValue(true).descripti
 CONFIG(bool, DualScreenMode).defaultValue(false).description("Sets whether to split the screen in half, with one half for minimap and one for main screen. Right side is for minimap unless DualScreenMiniMapOnLeft is set.");
 CONFIG(bool, DualScreenMiniMapOnLeft).defaultValue(false).description("When set, will make the left half of the screen the minimap when DualScreenMode is set.");
 CONFIG(bool, TeamNanoSpray).defaultValue(true).headlessValue(false);
-CONFIG(bool, VRDebugWindows).defaultValue(true).headlessValue(false).description("Creates debug windows for VR render targets.");
-CONFIG(float, VRDebugEyeSeparation).defaultValue(6.40f).minimumValue(0.0f).maximumValue(100.0f).description("Eye separation used for VR debug windows in map elmos.");
+CONFIG(bool, EnableOpenXR).defaultValue(false).headlessValue(false).description("Enables OpenXR integration for VR rendering.");
 
 CONFIG(int, MinimizeOnFocusLoss).defaultValue(0).minimumValue(0).maximumValue(1).description("When set to 1 minimize Window if it loses key focus when in fullscreen mode.");
 
@@ -348,10 +349,7 @@ CGlobalRendering::CGlobalRendering()
 	, underExternalDebug(false)
 	, forceDWMFlush(configHandler->GetInt("DWMFlush"))
 #ifndef HEADLESS
-	, enableVRDebugTargets(configHandler->GetBool("VRDebugWindows"))
-	, debugTargetsDirty(true)
-	, debugTargetsInitialized(false)
-	, debugEyeSeparation(configHandler->GetFloat("VRDebugEyeSeparation"))
+	, enableOpenXR(configHandler->GetBool("EnableOpenXR"))
 #endif
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
@@ -379,8 +377,7 @@ CGlobalRendering::CGlobalRendering()
 		"WindowPosX",
 		"WindowPosY",
 		"MinSampleShadingRate",
-		"VRDebugWindows",
-		"VRDebugEyeSeparation"
+		"EnableOpenXR"
 	});
 	SetDualScreenParams();
 }
@@ -634,7 +631,9 @@ void CGlobalRendering::DestroyWindowAndContext() {
 		return;
 
 #ifndef HEADLESS
-	DestroyDebugTargets();
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+	ShutdownOpenXR();
+#endif
 #endif
 
 	WindowManagerHelper::SetIconSurface(sdlWindow, nullptr);
@@ -1298,13 +1297,18 @@ void CGlobalRendering::ConfigNotify(const std::string& key, const std::string& v
 		return;
 	}
 #ifndef HEADLESS
-	if (key == "VRDebugWindows") {
-		enableVRDebugTargets = configHandler->GetBool("VRDebugWindows");
-		debugTargetsDirty = true;
-		return;
-	}
-	if (key == "VRDebugEyeSeparation") {
-		debugEyeSeparation = configHandler->GetFloat("VRDebugEyeSeparation");
+	if (key == "EnableOpenXR") {
+		const bool newState = configHandler->GetBool("EnableOpenXR");
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+		if (enableOpenXR != newState) {
+			enableOpenXR = newState;
+			if (!enableOpenXR)
+				ShutdownOpenXR();
+		}
+#else
+		(void)newState;
+		enableOpenXR = false;
+#endif
 		return;
 	}
 #endif
@@ -1724,9 +1728,6 @@ void CGlobalRendering::UpdateGLGeometry()
 	UpdateViewPortGeometry();
 	UpdatePixelGeometry();
 	UpdateScreenMatrices();
-#ifndef HEADLESS
-	debugTargetsDirty = true;
-#endif
 	RefreshDebugRenderTargets();
 
 	LOG("[GR::%s][2] winSize=<%d,%d>", __func__, winSizeX, winSizeY);
@@ -1769,316 +1770,552 @@ void CGlobalRendering::InitGLState()
 void CGlobalRendering::RefreshDebugRenderTargets()
 {
 #ifndef HEADLESS
-	if (!debugTargetsDirty)
-		return;
-
+#if defined(HAVE_OPENXR) && defined(_WIN32)
 	if (!Threading::IsMainThread())
 		return;
 
-	if (!enableVRDebugTargets) {
-		DestroyDebugTargets();
-		debugTargetsDirty = false;
+	if (!enableOpenXR) {
+		ShutdownOpenXR();
 		return;
 	}
 
 	if (sdlWindow == nullptr || glContext == nullptr)
 		return;
 
-	if (viewSizeX <= 0 || viewSizeY <= 0)
+	if (!EnsureOpenXRInitialized())
 		return;
 
-	MakeCurrentContext(false);
-
-	if (!debugTargetsInitialized) {
-		debugTargetsInitialized = InitDebugRenderTargets();
-	} else {
-		ResizeDebugTargets();
+	PollOpenXREvents();
+#else
+	if (enableOpenXR) {
+		static bool warned = false;
+		if (!warned) {
+			LOG_L(L_WARNING, "[GR::RefreshDebugRenderTargets] EnableOpenXR is set but this build was compiled without OpenXR support.");
+			warned = true;
+		}
+		enableOpenXR = false;
 	}
-
-	debugTargetsDirty = false;
+#endif
 #endif
 }
 
 #ifndef HEADLESS
 bool CGlobalRendering::HasDebugTargets() const
 {
-	return enableVRDebugTargets && debugTargetsInitialized && (GetDebugTargetCount() > 0);
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+	return enableOpenXR && openXR.initialized && openXR.sessionRunning && !openXR.viewData.empty();
+#else
+	return false;
+#endif
 }
 
 size_t CGlobalRendering::GetDebugTargetCount() const
 {
-	if (!enableVRDebugTargets || !debugTargetsInitialized)
-		return 0;
-
-	size_t count = 0;
-	for (const auto& target : debugRenderTargets) {
-		if (target.fbo.IsValid())
-			++count;
-	}
-	return count;
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+	return HasDebugTargets() ? openXR.viewData.size() : 0u;
+#else
+	return 0;
+#endif
 }
 
-void CGlobalRendering::BindDebugTarget(size_t index)
+bool CGlobalRendering::BindDebugTarget(size_t index)
 {
+#if defined(HAVE_OPENXR) && defined(_WIN32)
 	if (!HasDebugTargets())
-		return;
+		return false;
 
-	if (index >= debugRenderTargets.size())
-		return;
-
-	auto& target = debugRenderTargets[index];
-	if (!target.fbo.IsValid())
-		return;
+	if (index >= openXR.viewData.size())
+		return false;
 
 	MakeCurrentContext(false);
-	target.fbo.Bind();
-	glViewport(0, 0, target.framebufferSize.x, target.framebufferSize.y);
+
+	if (index == 0) {
+		if (!BeginOpenXRFrame())
+			return false;
+	} else if (!openXR.frameBegun) {
+		return false;
+	}
+
+	if (!AcquireOpenXRView(index)) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
 	drawingToDebugTarget = true;
-	boundDebugFBO = target.fbo.GetId();
+	boundDebugFBO = openXR.viewData[index].fbo.GetId();
+	return true;
+#else
+	(void)index;
+	return false;
+#endif
 }
 
 void CGlobalRendering::PresentDebugTarget(size_t index)
 {
-	if (!HasDebugTargets())
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+	if (!openXR.frameBegun)
 		return;
 
-	if (index >= debugRenderTargets.size())
+	if (index >= openXR.viewData.size())
 		return;
 
-	auto& target = debugRenderTargets[index];
-	if (!target.fbo.IsValid() || target.window == nullptr || target.context == nullptr)
-		return;
+	MakeCurrentContext(false);
 
-	PresentDebugTargetInternal(target);
+	OpenXRView& view = openXR.viewData[index];
+
+	if (view.imageAcquired) {
+		auto& projView = openXR.projectionViews[index];
+		projView.subImage.swapchain = view.swapchain;
+		projView.subImage.imageRect.offset = {0, 0};
+		projView.subImage.imageRect.extent = {static_cast<int32_t>(view.width), static_cast<int32_t>(view.height)};
+		projView.subImage.imageArrayIndex = 0;
+
+		glFlush();
+		ReleaseOpenXRView(index);
+		openXR.viewsRenderedThisFrame += 1;
+	} else {
+		openXR.frameHadErrors = true;
+	}
+
 	drawingToDebugTarget = false;
 	boundDebugFBO = 0;
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	if (index + 1 == openXR.viewData.size()) {
+		const bool submitLayers = openXR.viewsRenderedThisFrame == static_cast<uint32_t>(openXR.viewData.size());
+		EndOpenXRFrame(submitLayers);
+	}
+#else
+	(void)index;
+#endif
 }
 
 void CGlobalRendering::BindMainFramebuffer() const
 {
 	MakeCurrentContext(false);
-	// leaving any debug target context
 	drawingToDebugTarget = false;
 	boundDebugFBO = 0;
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-bool CGlobalRendering::InitDebugRenderTargets()
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+bool CGlobalRendering::EnsureOpenXRInitialized()
 {
-	size_t created = 0;
-
-	for (size_t i = 0; i < debugRenderTargets.size(); ++i) {
-		auto& target = debugRenderTargets[i];
-		if (!CreateDebugWindow(target, i))
-			continue;
-
-		if (!CreateDebugRenderTargetResources(target)) {
-			DestroyDebugRenderTargetResources(target);
-			if (target.context != nullptr) {
-				SDL_GL_DeleteContext(target.context);
-				target.context = nullptr;
-			}
-			if (target.window != nullptr) {
-				SDL_DestroyWindow(target.window);
-				target.window = nullptr;
-			}
-			continue;
-		}
-
-		++created;
-	}
-
-	return (created > 0);
-}
-
-void CGlobalRendering::DestroyDebugTargets()
-{
-	MakeCurrentContext(false);
-
-	for (auto& target : debugRenderTargets) {
-		DestroyDebugRenderTargetResources(target);
-		if (target.context != nullptr && target.window != nullptr)
-			SDL_GL_MakeCurrent(target.window, nullptr);
-
-		if (target.context != nullptr) {
-			SDL_GL_DeleteContext(target.context);
-			target.context = nullptr;
-		}
-		if (target.window != nullptr) {
-			SDL_DestroyWindow(target.window);
-			target.window = nullptr;
-		}
-		target.title.clear();
-	}
-
-	debugTargetsInitialized = false;
-}
-
-void CGlobalRendering::DestroyDebugRenderTargetResources(DebugRenderTarget& target)
-{
-	if (target.colorTexture != 0) {
-		glDeleteTextures(1, &target.colorTexture);
-		target.colorTexture = 0;
-	}
-
-	if (target.fbo.IsValid())
-		target.fbo.Kill();
-
-	target.framebufferSize = {0, 0};
-}
-
-bool CGlobalRendering::CreateDebugRenderTargetResources(DebugRenderTarget& target)
-{
-	DestroyDebugRenderTargetResources(target);
-	// Ensure we create GL objects in the target's own context; some container objects (FBO/RBO)
-	// are not reliably shared across contexts on all drivers even when sharing is enabled.
-	// Switch to the debug window context if available, then restore main context afterward.
-	SDL_GLContext prevCtx = glContext;
-	SDL_Window* prevWin = sdlWindow;
-	if (target.window != nullptr && target.context != nullptr) {
-		SDL_GL_MakeCurrent(target.window, target.context);
-	}
-
-	int drawableW = viewSizeX;
-	int drawableH = viewSizeY;
-	if (target.window != nullptr) {
-		// Use drawable size (accounts for HiDPI scaling) for FBO allocation
-		SDL_GL_GetDrawableSize(target.window, &drawableW, &drawableH);
-	}
-
-	target.fbo.Init(false);
-	target.framebufferSize = {drawableW, drawableH};
-
-	glGenTextures(1, &target.colorTexture);
-	glBindTexture(GL_TEXTURE_2D, target.colorTexture);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, target.framebufferSize.x, target.framebufferSize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-	target.fbo.Bind();
-	target.fbo.AttachTexture(target.colorTexture, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0_EXT);
-	target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, target.framebufferSize.x, target.framebufferSize.y);
-
-	const GLenum drawBuf = GL_COLOR_ATTACHMENT0_EXT;
-	glDrawBuffers(1, &drawBuf);
-
-	const bool valid = target.fbo.CheckStatus(target.title.empty() ? "VRDebugTarget" : target.title.c_str());
-	target.fbo.Unbind();
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	bool result = true;
-	if (!valid) {
-		DestroyDebugRenderTargetResources(target);
-		result = false;
-	}
-
-	// Restore previous context
-	if (prevWin != nullptr && prevCtx != nullptr) {
-		SDL_GL_MakeCurrent(prevWin, prevCtx);
-	}
-
-	return result;
-}
-
-bool CGlobalRendering::CreateDebugWindow(DebugRenderTarget& target, size_t index)
-{
-	if (target.window != nullptr && target.context != nullptr)
+	if (openXR.initialized)
 		return true;
 
-	const int defaultWidth = std::max(1, viewSizeX / 2);
-	const int defaultHeight = std::max(1, viewSizeY / 2);
-
-	const std::array<const char*, 2> eyeLabels = {"Left Eye", "Right Eye"};
-	const std::string baseTitle = mainWindowTitle.empty() ? std::string("Recoil") : mainWindowTitle;
-	if (index < eyeLabels.size())
-		target.title = fmt::format("{} [{}]", baseTitle, eyeLabels[index]);
-	else
-		target.title = fmt::format("{} [Eye {}]", baseTitle, index + 1);
-
-	const int offsetX = winPosX + winSizeX + 40;
-	const int offsetY = winPosY + 40 + static_cast<int>(index) * (defaultHeight + 20);
-
-	Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-	target.window = SDL_CreateWindow(target.title.c_str(), offsetX, offsetY, defaultWidth, defaultHeight, flags);
-	if (target.window == nullptr) {
-		LOG_L(L_WARNING, "[GR::%s] failed to create VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
+	MakeCurrentContext(false);
+	if (!InitOpenXR()) {
+		enableOpenXR = false;
 		return false;
 	}
-
-	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
-	target.context = SDL_GL_CreateContext(target.window);
-	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
-
-	if (target.context == nullptr) {
-		LOG_L(L_WARNING, "[GR::%s] failed to create GL context for VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
-		SDL_DestroyWindow(target.window);
-		target.window = nullptr;
-		return false;
-	}
-
-	SDL_GL_MakeCurrent(target.window, target.context);
-	SDL_GL_SetSwapInterval(0);
-	SDL_ShowWindow(target.window);
-	SDL_GL_MakeCurrent(sdlWindow, glContext);
-
 	return true;
 }
 
-void CGlobalRendering::ResizeDebugTargets()
+bool CGlobalRendering::InitOpenXR()
 {
-	size_t readyTargets = 0;
+	ShutdownOpenXR();
 
-	for (size_t i = 0; i < debugRenderTargets.size(); ++i) {
-		auto& target = debugRenderTargets[i];
-		if (target.window == nullptr || target.context == nullptr) {
-			if (!CreateDebugWindow(target, i))
-				continue;
-		}
+	const std::array<const char*, 1> requiredExtensions = {"XR_KHR_opengl_enable"};
 
-		const bool needsResize = (target.framebufferSize.x != viewSizeX) || (target.framebufferSize.y != viewSizeY);
-		const bool needsRebuild = !target.fbo.IsValid() || target.colorTexture == 0;
-		if (needsResize || needsRebuild) {
-			if (!CreateDebugRenderTargetResources(target))
-				continue;
-		}
+	XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
+	std::memset(createInfo.applicationInfo.applicationName, 0, sizeof(createInfo.applicationInfo.applicationName));
+	std::memset(createInfo.applicationInfo.engineName, 0, sizeof(createInfo.applicationInfo.engineName));
+	std::strncpy(createInfo.applicationInfo.applicationName, "RecoilEngine", XR_MAX_APPLICATION_NAME_SIZE - 1);
+	std::strncpy(createInfo.applicationInfo.engineName, "RecoilEngine", XR_MAX_ENGINE_NAME_SIZE - 1);
+	createInfo.applicationInfo.applicationVersion = 1;
+	createInfo.applicationInfo.engineVersion = 1;
+	createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+	createInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
+	createInfo.enabledExtensionNames = requiredExtensions.data();
 
-		const int newWidth = std::max(1, viewSizeX / 2);
-		const int newHeight = std::max(1, viewSizeY / 2);
-		SDL_SetWindowSize(target.window, newWidth, newHeight);
-		const int offsetX = winPosX + winSizeX + 40;
-		const int offsetY = winPosY + 40 + static_cast<int>(i) * (newHeight + 20);
-		SDL_SetWindowPosition(target.window, offsetX, offsetY);
+	if (!CheckXrResult(xrCreateInstance(&createInfo, &openXR.instance), "xrCreateInstance"))
+		return false;
 
-		++readyTargets;
+	if (!CheckXrResult(xrGetInstanceProcAddr(openXR.instance, "xrGetOpenGLGraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&openXR.getGraphicsRequirements)), "xrGetInstanceProcAddr[xrGetOpenGLGraphicsRequirementsKHR]"))
+		return false;
+
+	if (openXR.getGraphicsRequirements == nullptr) {
+		LOG_L(L_ERROR, "[OpenXR] xrGetOpenGLGraphicsRequirementsKHR is not available");
+		return false;
 	}
 
-	debugTargetsInitialized = (readyTargets > 0);
+	XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
+	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+	if (!CheckXrResult(xrGetSystem(openXR.instance, &systemInfo, &openXR.systemId), "xrGetSystem"))
+		return false;
+
+	uint32_t blendModeCount = 0;
+	if (CheckXrResult(xrEnumerateEnvironmentBlendModes(openXR.instance, openXR.systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &blendModeCount, nullptr), "xrEnumerateEnvironmentBlendModes")) {
+		std::vector<XrEnvironmentBlendMode> modes(blendModeCount);
+		if (CheckXrResult(xrEnumerateEnvironmentBlendModes(openXR.instance, openXR.systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, blendModeCount, &blendModeCount, modes.data()), "xrEnumerateEnvironmentBlendModes")) {
+			if (!modes.empty())
+				openXR.environmentBlendMode = modes.front();
+		}
+	}
+
+	XrGraphicsRequirementsOpenGLKHR glRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};
+	if (!CheckXrResult(openXR.getGraphicsRequirements(openXR.instance, openXR.systemId, &glRequirements), "xrGetOpenGLGraphicsRequirementsKHR"))
+		return false;
+
+	SDL_SysWMinfo wmInfo{};
+	SDL_VERSION(&wmInfo.version);
+	if (SDL_GetWindowWMInfo(sdlWindow, &wmInfo) == SDL_FALSE) {
+		LOG_L(L_ERROR, "[OpenXR] SDL_GetWindowWMInfo failed: %s", SDL_GetError());
+		return false;
+	}
+
+	XrGraphicsBindingOpenGLWin32KHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR};
+	graphicsBinding.hDC = wmInfo.info.win.hdc;
+	graphicsBinding.hGLRC = static_cast<HGLRC>(glContext);
+
+	XrSessionCreateInfo sessionInfo{XR_TYPE_SESSION_CREATE_INFO};
+	sessionInfo.next = &graphicsBinding;
+	sessionInfo.systemId = openXR.systemId;
+	if (!CheckXrResult(xrCreateSession(openXR.instance, &sessionInfo, &openXR.session), "xrCreateSession"))
+		return false;
+
+	XrReferenceSpaceCreateInfo spaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+	spaceInfo.poseInReferenceSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+	spaceInfo.poseInReferenceSpace.position = {0.0f, 0.0f, 0.0f};
+	if (!CheckXrResult(xrCreateReferenceSpace(openXR.session, &spaceInfo, &openXR.appSpace), "xrCreateReferenceSpace"))
+		return false;
+
+	uint32_t viewCount = 0;
+	if (!CheckXrResult(xrEnumerateViewConfigurationViews(openXR.instance, openXR.systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr), "xrEnumerateViewConfigurationViews"))
+		return false;
+
+	openXR.viewConfigViews.resize(viewCount);
+	if (!CheckXrResult(xrEnumerateViewConfigurationViews(openXR.instance, openXR.systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, openXR.viewConfigViews.data()), "xrEnumerateViewConfigurationViews"))
+		return false;
+
+	openXR.views.resize(viewCount);
+	openXR.projectionViews.resize(viewCount);
+	openXR.viewData.resize(viewCount);
+
+	uint32_t formatCount = 0;
+	if (!CheckXrResult(xrEnumerateSwapchainFormats(openXR.session, 0, &formatCount, nullptr), "xrEnumerateSwapchainFormats"))
+		return false;
+
+	std::vector<int64_t> formats(formatCount);
+	if (!CheckXrResult(xrEnumerateSwapchainFormats(openXR.session, static_cast<uint32_t>(formats.size()), &formatCount, formats.data()), "xrEnumerateSwapchainFormats"))
+		return false;
+
+	const std::array<int64_t, 3> preferredFormats = {GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGBA8};
+	int64_t chosenFormat = formats.empty() ? GL_SRGB8_ALPHA8 : formats.front();
+	for (int64_t preferred : preferredFormats) {
+		if (std::find(formats.begin(), formats.end(), preferred) != formats.end()) {
+			chosenFormat = preferred;
+			break;
+		}
+	}
+
+	for (size_t viewIdx = 0; viewIdx < openXR.viewData.size(); ++viewIdx) {
+		OpenXRView& view = openXR.viewData[viewIdx];
+		const auto& viewCfg = openXR.viewConfigViews[viewIdx];
+
+		view.width = viewCfg.recommendedImageRectWidth;
+		view.height = viewCfg.recommendedImageRectHeight;
+
+		XrSwapchainCreateInfo swapchainInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+		swapchainInfo.arraySize = 1;
+		swapchainInfo.mipCount = 1;
+		swapchainInfo.faceCount = 1;
+		swapchainInfo.format = chosenFormat;
+		swapchainInfo.width = view.width;
+		swapchainInfo.height = view.height;
+		swapchainInfo.sampleCount = std::max<uint32_t>(1u, viewCfg.recommendedSwapchainSampleCount);
+		swapchainInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+
+		if (!CheckXrResult(xrCreateSwapchain(openXR.session, &swapchainInfo, &view.swapchain), "xrCreateSwapchain"))
+			return false;
+
+		uint32_t imageCount = 0;
+		if (!CheckXrResult(xrEnumerateSwapchainImages(view.swapchain, 0, &imageCount, nullptr), "xrEnumerateSwapchainImages"))
+			return false;
+
+		view.images.resize(imageCount);
+		for (uint32_t imageIdx = 0; imageIdx < imageCount; ++imageIdx)
+			view.images[imageIdx] = XrSwapchainImageOpenGLKHR{XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR};
+
+		if (!CheckXrResult(
+			xrEnumerateSwapchainImages(
+				view.swapchain,
+				imageCount,
+				&imageCount,
+				reinterpret_cast<XrSwapchainImageBaseHeader*>(view.images.data())
+			),
+			"xrEnumerateSwapchainImages"
+		))
+			return false;
+
+		view.fbo.Init(false);
+		view.fbo.Bind();
+		view.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, view.width, view.height);
+		view.fbo.Unbind();
+	}
+
+	openXR.sessionState = XR_SESSION_STATE_UNKNOWN;
+	openXR.sessionRunning = false;
+	openXR.frameBegun = false;
+	openXR.frameHadErrors = false;
+	openXR.viewsRenderedThisFrame = 0;
+	openXR.initialized = true;
+
+	LOG_L(L_INFO, "[OpenXR] Initialized (%u views)", static_cast<unsigned int>(openXR.viewData.size()));
+	return true;
 }
 
-void CGlobalRendering::PresentDebugTargetInternal(DebugRenderTarget& target)
+void CGlobalRendering::ShutdownOpenXR()
 {
-	glFlush();
-	SDL_GL_MakeCurrent(target.window, target.context);
+	if (!openXR.initialized && openXR.instance == XR_NULL_HANDLE)
+		return;
 
-	int wndW = 0;
-	int wndH = 0;
-	SDL_GetWindowSize(target.window, &wndW, &wndH);
-	wndW = std::max(wndW, 1);
-	wndH = std::max(wndH, 1);
+	if (sdlWindow != nullptr && glContext != nullptr)
+		MakeCurrentContext(false);
 
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, target.fbo.GetId());
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	glViewport(0, 0, wndW, wndH);
-	glBlitFramebuffer(0, 0, target.framebufferSize.x, target.framebufferSize.y, 0, 0, wndW, wndH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-	SDL_GL_SwapWindow(target.window);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	SDL_GL_MakeCurrent(sdlWindow, glContext);
+	if (openXR.frameBegun)
+		EndOpenXRFrame(false);
+
+	for (size_t i = 0; i < openXR.viewData.size(); ++i) {
+		ReleaseOpenXRView(i);
+		OpenXRView& view = openXR.viewData[i];
+		if (view.swapchain != XR_NULL_HANDLE) {
+			xrDestroySwapchain(view.swapchain);
+			view.swapchain = XR_NULL_HANDLE;
+		}
+		view.fbo.Kill();
+		view.images.clear();
+		view.width = view.height = 0;
+	}
+
+	openXR.viewData.clear();
+	openXR.projectionViews.clear();
+	openXR.views.clear();
+	openXR.viewConfigViews.clear();
+
+	if (openXR.appSpace != XR_NULL_HANDLE) {
+		xrDestroySpace(openXR.appSpace);
+		openXR.appSpace = XR_NULL_HANDLE;
+	}
+
+	if (openXR.session != XR_NULL_HANDLE) {
+		xrDestroySession(openXR.session);
+		openXR.session = XR_NULL_HANDLE;
+	}
+
+	if (openXR.instance != XR_NULL_HANDLE) {
+		xrDestroyInstance(openXR.instance);
+		openXR.instance = XR_NULL_HANDLE;
+	}
+
+	openXR.initialized = false;
+	openXR.sessionRunning = false;
+	openXR.sessionState = XR_SESSION_STATE_UNKNOWN;
+	openXR.frameBegun = false;
+	openXR.frameHadErrors = false;
+	openXR.viewsRenderedThisFrame = 0;
+	openXR.getGraphicsRequirements = nullptr;
 }
-#endif
+
+void CGlobalRendering::PollOpenXREvents()
+{
+	if (!openXR.initialized)
+		return;
+
+	XrEventDataBuffer eventData{XR_TYPE_EVENT_DATA_BUFFER};
+
+	while (xrPollEvent(openXR.instance, &eventData) == XR_SUCCESS) {
+		switch (eventData.type) {
+			case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+				auto& stateChanged = *reinterpret_cast<XrEventDataSessionStateChanged*>(&eventData);
+				openXR.sessionState = stateChanged.state;
+				switch (stateChanged.state) {
+					case XR_SESSION_STATE_READY: {
+						if (!openXR.sessionRunning) {
+							XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
+							beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+							if (CheckXrResult(xrBeginSession(openXR.session, &beginInfo), "xrBeginSession")) {
+								openXR.sessionRunning = true;
+								openXR.frameBegun = false;
+							}
+						}
+						break;
+					}
+					case XR_SESSION_STATE_STOPPING: {
+						if (openXR.sessionRunning)
+							CheckXrResult(xrEndSession(openXR.session), "xrEndSession");
+						openXR.sessionRunning = false;
+						openXR.frameBegun = false;
+						break;
+					}
+					case XR_SESSION_STATE_EXITING:
+					case XR_SESSION_STATE_LOSS_PENDING: {
+						openXR.sessionRunning = false;
+						openXR.frameBegun = false;
+						break;
+					}
+					default:
+						break;
+				}
+				break;
+			}
+			case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
+				openXR.sessionRunning = false;
+				openXR.frameBegun = false;
+				break;
+			default:
+				break;
+		}
+
+		eventData = {XR_TYPE_EVENT_DATA_BUFFER};
+	}
+}
+
+bool CGlobalRendering::BeginOpenXRFrame()
+{
+	if (!openXR.initialized || !openXR.sessionRunning)
+		return false;
+
+	if (openXR.frameBegun)
+		return true;
+
+	XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
+	if (!CheckXrResult(xrWaitFrame(openXR.session, &waitInfo, &openXR.frameState), "xrWaitFrame")) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
+	XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+	if (!CheckXrResult(xrBeginFrame(openXR.session, &beginInfo), "xrBeginFrame")) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
+	XrViewLocateInfo locateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+	locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	locateInfo.displayTime = openXR.frameState.predictedDisplayTime;
+	locateInfo.space = openXR.appSpace;
+
+	XrViewState viewState{XR_TYPE_VIEW_STATE};
+	uint32_t viewCountOutput = 0;
+	for (auto& view : openXR.views) {
+		std::memset(&view, 0, sizeof(XrView));
+		view.type = XR_TYPE_VIEW;
+	}
+
+	if (!CheckXrResult(xrLocateViews(openXR.session, &locateInfo, &viewState, static_cast<uint32_t>(openXR.views.size()), &viewCountOutput, openXR.views.data()), "xrLocateViews")) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
+	for (size_t i = 0; i < openXR.projectionViews.size(); ++i) {
+		auto& proj = openXR.projectionViews[i];
+		std::memset(&proj, 0, sizeof(XrCompositionLayerProjectionView));
+		proj.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+		if (i < openXR.views.size()) {
+			proj.pose = openXR.views[i].pose;
+			proj.fov = openXR.views[i].fov;
+		}
+	}
+
+	openXR.viewsRenderedThisFrame = 0;
+	openXR.frameHadErrors = false;
+	openXR.frameBegun = true;
+	return true;
+}
+
+void CGlobalRendering::EndOpenXRFrame(bool submitLayers)
+{
+	if (!openXR.frameBegun)
+		return;
+
+	XrCompositionLayerProjection projectionLayer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+	projectionLayer.space = openXR.appSpace;
+	projectionLayer.viewCount = static_cast<uint32_t>(openXR.projectionViews.size());
+	projectionLayer.views = openXR.projectionViews.data();
+
+	const XrCompositionLayerBaseHeader* layers[] = {
+		reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projectionLayer)
+	};
+
+	XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
+	endInfo.displayTime = openXR.frameState.predictedDisplayTime;
+	endInfo.environmentBlendMode = openXR.environmentBlendMode;
+	if (!openXR.frameHadErrors && submitLayers && projectionLayer.viewCount > 0) {
+		endInfo.layerCount = 1;
+		endInfo.layers = layers;
+	} else {
+		endInfo.layerCount = 0;
+		endInfo.layers = nullptr;
+	}
+
+	CheckXrResult(xrEndFrame(openXR.session, &endInfo), "xrEndFrame");
+	openXR.frameBegun = false;
+	openXR.viewsRenderedThisFrame = 0;
+	openXR.frameHadErrors = false;
+}
+
+bool CGlobalRendering::AcquireOpenXRView(size_t index)
+{
+	if (index >= openXR.viewData.size())
+		return false;
+
+	OpenXRView& view = openXR.viewData[index];
+
+	XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+	uint32_t imageIndex = 0;
+	if (!CheckXrResult(xrAcquireSwapchainImage(view.swapchain, &acquireInfo, &imageIndex), "xrAcquireSwapchainImage")) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
+	XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+	waitInfo.timeout = XR_INFINITE_DURATION;
+	if (!CheckXrResult(xrWaitSwapchainImage(view.swapchain, &waitInfo), "xrWaitSwapchainImage")) {
+		openXR.frameHadErrors = true;
+		return false;
+	}
+
+	view.acquiredImageIndex = imageIndex;
+	view.imageAcquired = true;
+	view.fbo.Bind();
+	view.fbo.AttachTexture(view.images[imageIndex].image, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0);
+	glViewport(0, 0, view.width, view.height);
+	return true;
+}
+
+void CGlobalRendering::ReleaseOpenXRView(size_t index)
+{
+	if (index >= openXR.viewData.size())
+		return;
+
+	OpenXRView& view = openXR.viewData[index];
+	if (!view.imageAcquired)
+		return;
+
+	XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+	if (!CheckXrResult(xrReleaseSwapchainImage(view.swapchain, &releaseInfo), "xrReleaseSwapchainImage"))
+		openXR.frameHadErrors = true;
+	view.imageAcquired = false;
+}
+
+bool CGlobalRendering::CheckXrResult(XrResult result, const char* functionName) const
+{
+	if (XR_FAILED(result)) {
+		char buffer[XR_MAX_RESULT_STRING_SIZE] = {0};
+		if (openXR.instance != XR_NULL_HANDLE && XR_SUCCEEDED(xrResultToString(openXR.instance, result, buffer))) {
+			LOG_L(L_ERROR, "[OpenXR] %s failed: %s (%d)", functionName, buffer, static_cast<int>(result));
+		} else {
+			LOG_L(L_ERROR, "[OpenXR] %s failed: %d", functionName, static_cast<int>(result));
+		}
+		return false;
+	}
+	return true;
+}
+#endif // defined(HAVE_OPENXR) && defined(_WIN32)
+#endif // HEADLESS
 
 void CGlobalRendering::ToggleMultisampling() const
 {

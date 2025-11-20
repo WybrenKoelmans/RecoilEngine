@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <array>
+#include <vector>
 
 #include "System/Matrix44f.h"
 #include "System/creg/creg_cond.h"
@@ -15,6 +16,25 @@
 
 #ifndef HEADLESS
 #include "Rendering/GL/FBO.h"
+
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+#ifndef XR_USE_GRAPHICS_API_OPENGL
+#define XR_USE_GRAPHICS_API_OPENGL
+#endif
+#ifndef XR_USE_PLATFORM_WIN32
+#define XR_USE_PLATFORM_WIN32
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <unknwn.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#endif
 #endif
 
 class SharedLib;
@@ -104,12 +124,11 @@ public:
 #ifndef HEADLESS
 	bool HasDebugTargets() const;
 	size_t GetDebugTargetCount() const;
-	void BindDebugTarget(size_t index);
+	bool BindDebugTarget(size_t index);
 	void PresentDebugTarget(size_t index);
 	void BindMainFramebuffer() const;
 	bool IsDrawingToDebugTarget() const { return drawingToDebugTarget; }
 	uint32_t GetBoundDebugFBO() const { return boundDebugFBO; }
-	float GetDebugEyeSeparation() const { return debugEyeSeparation; }
 #endif
 
 	void LoadViewport();
@@ -430,22 +449,47 @@ private:
 	void SetMinSampleShadingRate();
 	bool SetWindowMinMaximized(bool maximize) const;
 #ifndef HEADLESS
-	struct DebugRenderTarget {
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+	struct OpenXRView {
 		FBO fbo;
-		GLuint colorTexture = 0;
-		int2 framebufferSize = {0, 0};
-		SDL_Window* window = nullptr;
-		SDL_GLContext context = nullptr;
-		std::string title;
+		XrSwapchain swapchain = XR_NULL_HANDLE;
+		std::vector<XrSwapchainImageOpenGLKHR> images;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		uint32_t acquiredImageIndex = 0;
+		bool imageAcquired = false;
 	};
 
-	bool InitDebugRenderTargets();
-	void DestroyDebugTargets();
-	void DestroyDebugRenderTargetResources(DebugRenderTarget& target);
-	bool CreateDebugRenderTargetResources(DebugRenderTarget& target);
-	bool CreateDebugWindow(DebugRenderTarget& target, size_t index);
-	void ResizeDebugTargets();
-	void PresentDebugTargetInternal(DebugRenderTarget& target);
+	struct OpenXRContext {
+		bool initialized = false;
+		XrInstance instance = XR_NULL_HANDLE;
+		XrSession session = XR_NULL_HANDLE;
+		XrSystemId systemId = XR_NULL_SYSTEM_ID;
+		XrSpace appSpace = XR_NULL_HANDLE;
+		XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
+		bool sessionRunning = false;
+		bool frameBegun = false;
+		bool frameHadErrors = false;
+		uint32_t viewsRenderedThisFrame = 0;
+		XrFrameState frameState { XR_TYPE_FRAME_STATE };
+		std::vector<XrViewConfigurationView> viewConfigViews;
+		std::vector<XrView> views;
+		std::vector<XrCompositionLayerProjectionView> projectionViews;
+		std::vector<OpenXRView> viewData;
+		XrEnvironmentBlendMode environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+		PFN_xrGetOpenGLGraphicsRequirementsKHR getGraphicsRequirements = nullptr;
+	};
+
+	bool EnsureOpenXRInitialized();
+	bool InitOpenXR();
+	void ShutdownOpenXR();
+	void PollOpenXREvents();
+	bool BeginOpenXRFrame();
+	void EndOpenXRFrame(bool submitLayers);
+	bool AcquireOpenXRView(size_t index);
+	void ReleaseOpenXRView(size_t index);
+	bool CheckXrResult(XrResult result, const char* functionName) const;
+#endif
 #endif
 private:
 	spring::unordered_set<std::string> glExtensions;
@@ -456,11 +500,10 @@ private:
 	static constexpr inline const char* ysKeys[2] = { "YResolutionWindowed", "YResolution" };
 
 #ifndef HEADLESS
-	std::array<DebugRenderTarget, 2> debugRenderTargets;
-	bool enableVRDebugTargets = false;
-	bool debugTargetsDirty = false;
-	bool debugTargetsInitialized = false;
-	float debugEyeSeparation = 6.40f;
+bool enableOpenXR = false;
+#if defined(HAVE_OPENXR) && defined(_WIN32)
+OpenXRContext openXR;
+#endif
 	// tracking current debug draw state so FBO::Unbind can restore the correct target
 	mutable bool drawingToDebugTarget = false;
 	mutable uint32_t boundDebugFBO = 0;

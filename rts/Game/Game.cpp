@@ -1503,33 +1503,19 @@ bool CGame::Draw() {
 		// (unlikely);
 #ifndef HEADLESS
 		globalRendering->RefreshDebugRenderTargets();
-		const size_t debugTargetCount = globalRendering->GetDebugTargetCount();
-		if (debugTargetCount > 0) {
-			const float baseSeparation = globalRendering->GetDebugEyeSeparation();
-			const float centerIndex = (debugTargetCount - 1) * 0.5f;
-			const float3 baseCameraPos = camera->GetPos();
-			const float3 cameraRight = camera->GetRight();
-
-			// use mirrored camera offsets so the debug windows show a stereo pair
-			for (size_t eyeIdx = 0; eyeIdx < debugTargetCount; ++eyeIdx) {
-				const float offsetFactor = static_cast<float>(eyeIdx) - centerIndex;
-				const float3 eyePos = baseCameraPos + (cameraRight * (offsetFactor * baseSeparation));
-
-				camera->SetPos(eyePos);
-				camera->Update(false, true, false, false);
-				UniformConstants::GetInstance().UpdateMatrices();
-
-				globalRendering->BindDebugTarget(eyeIdx);
+	const size_t vrViewCount = globalRendering->GetDebugTargetCount();
+	if (vrViewCount > 0) {
+		for (size_t eyeIdx = 0; eyeIdx < vrViewCount; ++eyeIdx) {
+			const bool targetReady = globalRendering->BindDebugTarget(eyeIdx);
+			if (targetReady) {
 				worldDrawer.Draw(false);
-				worldDrawer.ResetMVPMatrices();
-				globalRendering->PresentDebugTarget(eyeIdx);
 			}
-
-			camera->SetPos(baseCameraPos);
-			camera->Update(false, true, false, false);
-			UniformConstants::GetInstance().UpdateMatrices();
-			globalRendering->BindMainFramebuffer();
+			worldDrawer.ResetMVPMatrices();
+			globalRendering->PresentDebugTarget(eyeIdx);
 		}
+
+		globalRendering->BindMainFramebuffer();
+	}
 #endif
 		camera->LoadViewport();
 
