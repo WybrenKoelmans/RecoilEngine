@@ -1917,6 +1917,12 @@ bool CGlobalRendering::InitDebugRenderTargets()
 			target.fbo.Bind();
 			// Create depth buffer
 			target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, target.framebufferSize.x, target.framebufferSize.y);
+			
+			if (!target.fbo.CheckStatus("OpenXR FBO")) {
+				LOG_L(L_ERROR, "[GR::%s] OpenXR FBO %d check failed", __func__, (int)i);
+			} else {
+				LOG("[GR::%s] OpenXR FBO %d initialized (size=%dx%d)", __func__, (int)i, target.framebufferSize.x, target.framebufferSize.y);
+			}
 			target.fbo.Unbind();
 		}
 		return true;
@@ -2431,11 +2437,84 @@ void CGlobalRendering::LoadDualViewport()
 
 #if !defined(HEADLESS) && defined(_WIN32)
 
+static const char* GetXrResultString(XrResult res) {
+	switch (res) {
+		case XR_SUCCESS: return "XR_SUCCESS";
+		case XR_TIMEOUT_EXPIRED: return "XR_TIMEOUT_EXPIRED";
+		case XR_SESSION_LOSS_PENDING: return "XR_SESSION_LOSS_PENDING";
+		case XR_EVENT_UNAVAILABLE: return "XR_EVENT_UNAVAILABLE";
+		case XR_SPACE_BOUNDS_UNAVAILABLE: return "XR_SPACE_BOUNDS_UNAVAILABLE";
+		case XR_SESSION_NOT_FOCUSED: return "XR_SESSION_NOT_FOCUSED";
+		case XR_FRAME_DISCARDED: return "XR_FRAME_DISCARDED";
+		case XR_ERROR_VALIDATION_FAILURE: return "XR_ERROR_VALIDATION_FAILURE";
+		case XR_ERROR_RUNTIME_FAILURE: return "XR_ERROR_RUNTIME_FAILURE";
+		case XR_ERROR_OUT_OF_MEMORY: return "XR_ERROR_OUT_OF_MEMORY";
+		case XR_ERROR_API_VERSION_UNSUPPORTED: return "XR_ERROR_API_VERSION_UNSUPPORTED";
+		case XR_ERROR_INITIALIZATION_FAILED: return "XR_ERROR_INITIALIZATION_FAILED";
+		case XR_ERROR_FUNCTION_UNSUPPORTED: return "XR_ERROR_FUNCTION_UNSUPPORTED";
+		case XR_ERROR_FEATURE_UNSUPPORTED: return "XR_ERROR_FEATURE_UNSUPPORTED";
+		case XR_ERROR_EXTENSION_NOT_PRESENT: return "XR_ERROR_EXTENSION_NOT_PRESENT";
+		case XR_ERROR_LIMIT_REACHED: return "XR_ERROR_LIMIT_REACHED";
+		case XR_ERROR_SIZE_INSUFFICIENT: return "XR_ERROR_SIZE_INSUFFICIENT";
+		case XR_ERROR_HANDLE_INVALID: return "XR_ERROR_HANDLE_INVALID";
+		case XR_ERROR_INSTANCE_LOST: return "XR_ERROR_INSTANCE_LOST";
+		case XR_ERROR_SESSION_RUNNING: return "XR_ERROR_SESSION_RUNNING";
+		case XR_ERROR_SESSION_NOT_RUNNING: return "XR_ERROR_SESSION_NOT_RUNNING";
+		case XR_ERROR_SESSION_LOST: return "XR_ERROR_SESSION_LOST";
+		case XR_ERROR_SYSTEM_INVALID: return "XR_ERROR_SYSTEM_INVALID";
+		case XR_ERROR_PATH_INVALID: return "XR_ERROR_PATH_INVALID";
+		case XR_ERROR_PATH_COUNT_EXCEEDED: return "XR_ERROR_PATH_COUNT_EXCEEDED";
+		case XR_ERROR_PATH_FORMAT_INVALID: return "XR_ERROR_PATH_FORMAT_INVALID";
+		case XR_ERROR_PATH_UNSUPPORTED: return "XR_ERROR_PATH_UNSUPPORTED";
+		case XR_ERROR_LAYER_INVALID: return "XR_ERROR_LAYER_INVALID";
+		case XR_ERROR_LAYER_LIMIT_EXCEEDED: return "XR_ERROR_LAYER_LIMIT_EXCEEDED";
+		case XR_ERROR_SWAPCHAIN_RECT_INVALID: return "XR_ERROR_SWAPCHAIN_RECT_INVALID";
+		case XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED: return "XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED";
+		case XR_ERROR_ACTION_TYPE_MISMATCH: return "XR_ERROR_ACTION_TYPE_MISMATCH";
+		case XR_ERROR_SESSION_NOT_READY: return "XR_ERROR_SESSION_NOT_READY";
+		case XR_ERROR_SESSION_NOT_STOPPING: return "XR_ERROR_SESSION_NOT_STOPPING";
+		case XR_ERROR_TIME_INVALID: return "XR_ERROR_TIME_INVALID";
+		case XR_ERROR_REFERENCE_SPACE_UNSUPPORTED: return "XR_ERROR_REFERENCE_SPACE_UNSUPPORTED";
+		case XR_ERROR_FILE_ACCESS_ERROR: return "XR_ERROR_FILE_ACCESS_ERROR";
+		case XR_ERROR_FILE_CONTENTS_INVALID: return "XR_ERROR_FILE_CONTENTS_INVALID";
+		case XR_ERROR_FORM_FACTOR_UNSUPPORTED: return "XR_ERROR_FORM_FACTOR_UNSUPPORTED";
+		case XR_ERROR_FORM_FACTOR_UNAVAILABLE: return "XR_ERROR_FORM_FACTOR_UNAVAILABLE";
+		case XR_ERROR_API_LAYER_NOT_PRESENT: return "XR_ERROR_API_LAYER_NOT_PRESENT";
+		case XR_ERROR_CALL_ORDER_INVALID: return "XR_ERROR_CALL_ORDER_INVALID";
+		case XR_ERROR_GRAPHICS_DEVICE_INVALID: return "XR_ERROR_GRAPHICS_DEVICE_INVALID";
+		case XR_ERROR_POSE_INVALID: return "XR_ERROR_POSE_INVALID";
+		case XR_ERROR_INDEX_OUT_OF_RANGE: return "XR_ERROR_INDEX_OUT_OF_RANGE";
+		case XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED: return "XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED";
+		case XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED: return "XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED";
+		case XR_ERROR_NAME_DUPLICATED: return "XR_ERROR_NAME_DUPLICATED";
+		case XR_ERROR_NAME_INVALID: return "XR_ERROR_NAME_INVALID";
+		case XR_ERROR_ACTIONSET_NOT_ATTACHED: return "XR_ERROR_ACTIONSET_NOT_ATTACHED";
+		case XR_ERROR_ACTIONSETS_ALREADY_ATTACHED: return "XR_ERROR_ACTIONSETS_ALREADY_ATTACHED";
+		case XR_ERROR_LOCALIZED_NAME_DUPLICATED: return "XR_ERROR_LOCALIZED_NAME_DUPLICATED";
+		case XR_ERROR_LOCALIZED_NAME_INVALID: return "XR_ERROR_LOCALIZED_NAME_INVALID";
+		case XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING: return "XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING";
+		case XR_ERROR_RUNTIME_UNAVAILABLE: return "XR_ERROR_RUNTIME_UNAVAILABLE";
+		default: return "UNKNOWN_XR_ERROR";
+	}
+}
+
 bool CGlobalRendering::InitOpenXR()
 {
 	if (xrInstance != XR_NULL_HANDLE) return true;
 
 	LOG("[GR::%s] Initializing OpenXR...", __func__);
+
+	// Log available extensions
+	uint32_t extCount = 0;
+	if (xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr) == XR_SUCCESS) {
+		std::vector<XrExtensionProperties> exts(extCount, {XR_TYPE_EXTENSION_PROPERTIES});
+		if (xrEnumerateInstanceExtensionProperties(nullptr, extCount, &extCount, exts.data()) == XR_SUCCESS) {
+			LOG("[GR::%s] Available OpenXR Extensions:", __func__);
+			for (const auto& ext : exts) {
+				LOG("  %s (v%d)", ext.extensionName, ext.extensionVersion);
+			}
+		}
+	}
 
 	std::vector<const char*> extensions;
 	extensions.push_back(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
@@ -2445,19 +2524,21 @@ bool CGlobalRendering::InitOpenXR()
 	createInfo.applicationInfo.applicationVersion = 1;
 	strcpy(createInfo.applicationInfo.engineName, "Recoil");
 	createInfo.applicationInfo.engineVersion = 1;
-	createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+	createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	createInfo.enabledExtensionCount = (uint32_t)extensions.size();
 	createInfo.enabledExtensionNames = extensions.data();
 
-	if (xrCreateInstance(&createInfo, &xrInstance) != XR_SUCCESS) {
-		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR instance", __func__);
+	XrResult res = xrCreateInstance(&createInfo, &xrInstance);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR instance: %s (%d)", __func__, GetXrResultString(res), res);
 		return false;
 	}
 
 	XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
 	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-	if (xrGetSystem(xrInstance, &systemInfo, &xrSystemId) != XR_SUCCESS) {
-		LOG_L(L_ERROR, "[GR::%s] Failed to get OpenXR system", __func__);
+	res = xrGetSystem(xrInstance, &systemInfo, &xrSystemId);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to get OpenXR system: %s (%d)", __func__, GetXrResultString(res), res);
 		return false;
 	}
 
@@ -2465,26 +2546,46 @@ bool CGlobalRendering::InitOpenXR()
 	PFN_xrGetOpenGLGraphicsRequirementsKHR pfnGetOpenGLGraphicsRequirementsKHR = nullptr;
 	xrGetInstanceProcAddr(xrInstance, "xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction*)&pfnGetOpenGLGraphicsRequirementsKHR);
 	if (pfnGetOpenGLGraphicsRequirementsKHR) {
-		pfnGetOpenGLGraphicsRequirementsKHR(xrInstance, xrSystemId, &graphicsRequirements);
+		res = pfnGetOpenGLGraphicsRequirementsKHR(xrInstance, xrSystemId, &graphicsRequirements);
+		if (res != XR_SUCCESS) {
+			LOG_L(L_ERROR, "[GR::%s] Failed to get OpenGL graphics requirements: %s (%d)", __func__, GetXrResultString(res), res);
+			return false;
+		}
+		LOG("[GR::%s] OpenXR OpenGL Requirements: Min v%d.%d, Max v%d.%d", __func__,
+			XR_VERSION_MAJOR(graphicsRequirements.minApiVersionSupported), XR_VERSION_MINOR(graphicsRequirements.minApiVersionSupported),
+			XR_VERSION_MAJOR(graphicsRequirements.maxApiVersionSupported), XR_VERSION_MINOR(graphicsRequirements.maxApiVersionSupported));
+	} else {
+		LOG_L(L_ERROR, "[GR::%s] Failed to get xrGetOpenGLGraphicsRequirementsKHR function pointer", __func__);
+		return false;
 	}
 
 	XrGraphicsBindingOpenGLWin32KHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR};
 	graphicsBinding.hDC = wglGetCurrentDC();
 	graphicsBinding.hGLRC = wglGetCurrentContext();
 
+	if (!graphicsBinding.hDC || !graphicsBinding.hGLRC) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to get current wgl context/DC. hDC=%p, hGLRC=%p", __func__, graphicsBinding.hDC, graphicsBinding.hGLRC);
+		return false;
+	}
+
 	XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
 	sessionCreateInfo.next = &graphicsBinding;
 	sessionCreateInfo.systemId = xrSystemId;
 
-	if (xrCreateSession(xrInstance, &sessionCreateInfo, &xrSession) != XR_SUCCESS) {
-		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR session", __func__);
+	res = xrCreateSession(xrInstance, &sessionCreateInfo, &xrSession);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to create OpenXR session: %s (%d)", __func__, GetXrResultString(res), res);
 		return false;
 	}
 
 	XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
 	spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	spaceCreateInfo.poseInReferenceSpace.orientation.w = 1.0f;
-	xrCreateReferenceSpace(xrSession, &spaceCreateInfo, &xrAppSpace);
+	res = xrCreateReferenceSpace(xrSession, &spaceCreateInfo, &xrAppSpace);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] Failed to create reference space: %s (%d)", __func__, GetXrResultString(res), res);
+		return false;
+	}
 
 	uint32_t viewCount = 0;
 	xrEnumerateViewConfigurationViews(xrInstance, xrSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr);
@@ -2494,10 +2595,35 @@ bool CGlobalRendering::InitOpenXR()
 	xrViews.resize(viewCount, {XR_TYPE_VIEW});
 	xrSwapchains.resize(viewCount);
 
+	uint32_t formatCount = 0;
+	xrEnumerateSwapchainFormats(xrSession, 0, &formatCount, nullptr);
+	std::vector<int64_t> formats(formatCount);
+	xrEnumerateSwapchainFormats(xrSession, formatCount, &formatCount, formats.data());
+
+	int64_t selectedFormat = 0;
+	for (int64_t format : formats) {
+		if (format == GL_RGBA8) {
+			selectedFormat = format;
+			break;
+		}
+		if (selectedFormat == 0 && format == GL_SRGB8_ALPHA8) {
+			selectedFormat = format;
+		}
+		if (selectedFormat == 0 && format == GL_RGBA) {
+			selectedFormat = format;
+		}
+	}
+	if (selectedFormat == 0 && !formats.empty()) {
+		selectedFormat = formats[0];
+		LOG_L(L_WARNING, "[GR::%s] Could not find preferred swapchain format, using first available: %ld", __func__, (long)selectedFormat);
+	} else {
+		LOG("[GR::%s] Selected swapchain format: %ld", __func__, (long)selectedFormat);
+	}
+
 	for (uint32_t i = 0; i < viewCount; i++) {
 		XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
 		swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-		swapchainCreateInfo.format = GL_RGBA8;
+		swapchainCreateInfo.format = selectedFormat;
 		swapchainCreateInfo.sampleCount = 1;
 		swapchainCreateInfo.width = xrConfigViews[i].recommendedImageRectWidth;
 		swapchainCreateInfo.height = xrConfigViews[i].recommendedImageRectHeight;
@@ -2508,8 +2634,9 @@ bool CGlobalRendering::InitOpenXR()
 		xrSwapchains[i].width = swapchainCreateInfo.width;
 		xrSwapchains[i].height = swapchainCreateInfo.height;
 
-		if (xrCreateSwapchain(xrSession, &swapchainCreateInfo, &xrSwapchains[i].handle) != XR_SUCCESS) {
-			LOG_L(L_ERROR, "[GR::%s] Failed to create swapchain %d", __func__, i);
+		res = xrCreateSwapchain(xrSession, &swapchainCreateInfo, &xrSwapchains[i].handle);
+		if (res != XR_SUCCESS) {
+			LOG_L(L_ERROR, "[GR::%s] Failed to create swapchain %d: %s (%d)", __func__, i, GetXrResultString(res), res);
 			return false;
 		}
 
