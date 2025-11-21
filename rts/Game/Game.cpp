@@ -1512,44 +1512,57 @@ bool CGame::Draw() {
 			const float3 baseCameraRot = camera->GetRot();
 
 			// use mirrored camera offsets so the debug windows show a stereo pair
-			for (size_t eyeIdx = 0; eyeIdx < debugTargetCount; ++eyeIdx) {
-				float3 eyePos;
-				float3 eyeRot = baseCameraRot;
+				// VR Rendering Loop
+			if (globalRendering->IsVRActive() && globalRendering->ShouldRenderVR()) {
+				for (size_t eyeIdx = 0; eyeIdx < globalRendering->GetVRViewCount(); ++eyeIdx) {
+					float3 eyePos;
+					float3 eyeRot;
 
-#if defined(_WIN32)
-				if (globalRendering->IsVRActive()) {
-					const auto& view = globalRendering->GetVRView(eyeIdx);
-					const auto& pose = view.pose;
+					// const XrView& view = globalRendering->GetVRView(eyeIdx);
+					// const XrPosef& pose = view.pose;
+					
+					// Disable head tracking: Use base camera rotation and position
+					// Calculate stereo offset based on eye index and separation
+					// Assuming eye 0 is left, eye 1 is right.
+					// Offset is relative to camera right vector.
+					
+					float offsetScale = (eyeIdx == 0) ? -0.5f : 0.5f;
+					float3 stereoOffset = cameraRight * (globalRendering->GetDebugEyeSeparation() * offsetScale);
 
-					CQuaternion xrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
-					float3 xrPos(pose.position.x, pose.position.y, pose.position.z);
+					eyePos = baseCameraPos + stereoOffset;
+					eyeRot = baseCameraRot; // Lock rotation to game camera
 
-					CQuaternion baseQ = CQuaternion::FromEulerPYR(baseCameraRot);
-					float3 rotatedPos = baseQ.Rotate(xrPos);
+					// Set explicit projection matrix for VR
+					camera->SetExplicitProjectionMatrix(globalRendering->GetVRProjectionMatrix(eyeIdx));
+					
+					// Set viewport for VR (also done in BindVRTarget, but Camera needs to know)
+					const auto& swapchain = globalRendering->GetVRSwapchain(eyeIdx);
+					camera->UpdateViewPort(0, 0, swapchain.width, swapchain.height);
 
-					eyePos = baseCameraPos + rotatedPos;
-					eyeRot = (baseQ * xrRot).ToEulerPYR();
-				} else
-#endif
-				{
-					const float offsetFactor = static_cast<float>(eyeIdx) - centerIndex;
-					eyePos = baseCameraPos + (cameraRight * (offsetFactor * baseSeparation));
+					camera->SetPos(eyePos);
+					camera->SetRot(eyeRot);
+					camera->Update(false, true, true, false);
+					UniformConstants::GetInstance().UpdateMatrices();
+
+					if (globalRendering->BindVRTarget(eyeIdx)) {
+						worldDrawer.Draw(false);
+						worldDrawer.ResetMVPMatrices();
+						globalRendering->UnbindVRTarget(eyeIdx);
+					}
 				}
-
-				camera->SetPos(eyePos);
-				camera->SetRot(eyeRot);
-				camera->Update(false, true, false, false);
-				UniformConstants::GetInstance().UpdateMatrices();
-
-				globalRendering->BindDebugTarget(eyeIdx);
-				worldDrawer.Draw(false);
-				worldDrawer.ResetMVPMatrices();
-				globalRendering->PresentDebugTarget(eyeIdx);
 			}
+			
+			// If debug windows are enabled, we might want to blit the VR view to them?
+			// Or just leave them empty/black if we are in VR mode?
+			// For now, let's just focus on the HMD.
 
 			camera->SetPos(baseCameraPos);
 			camera->SetRot(baseCameraRot);
-			camera->Update(false, true, false, false);
+			// Reset explicit projection matrix
+			// Restore viewport to main window size
+			camera->UpdateViewPort(globalRendering->viewPosX, globalRendering->viewPosY, globalRendering->viewSizeX, globalRendering->viewSizeY);
+			
+			camera->Update(false, true, true, false);
 			UniformConstants::GetInstance().UpdateMatrices();
 			globalRendering->BindMainFramebuffer();
 		}

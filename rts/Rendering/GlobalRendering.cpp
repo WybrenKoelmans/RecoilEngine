@@ -71,7 +71,7 @@ CONFIG(bool, DualScreenMode).defaultValue(false).description("Sets whether to sp
 CONFIG(bool, DualScreenMiniMapOnLeft).defaultValue(false).description("When set, will make the left half of the screen the minimap when DualScreenMode is set.");
 CONFIG(bool, TeamNanoSpray).defaultValue(true).headlessValue(false);
 CONFIG(bool, VRDebugWindows).defaultValue(true).headlessValue(false).description("Creates debug windows for VR render targets.");
-CONFIG(float, VRDebugEyeSeparation).defaultValue(6.40f).minimumValue(0.0f).maximumValue(100.0f).description("Eye separation used for VR debug windows in map elmos.");
+
 
 CONFIG(int, MinimizeOnFocusLoss).defaultValue(0).minimumValue(0).maximumValue(1).description("When set to 1 minimize Window if it loses key focus when in fullscreen mode.");
 
@@ -351,7 +351,6 @@ CGlobalRendering::CGlobalRendering()
 	, enableVRDebugTargets(configHandler->GetBool("VRDebugWindows"))
 	, debugTargetsDirty(true)
 	, debugTargetsInitialized(false)
-	, debugEyeSeparation(configHandler->GetFloat("VRDebugEyeSeparation"))
 #endif
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
@@ -379,8 +378,7 @@ CGlobalRendering::CGlobalRendering()
 		"WindowPosX",
 		"WindowPosY",
 		"MinSampleShadingRate",
-		"VRDebugWindows",
-		"VRDebugEyeSeparation"
+		"VRDebugWindows"
 	});
 	SetDualScreenParams();
 }
@@ -685,6 +683,10 @@ void CGlobalRendering::PostInit() {
 	GL::shapes.Init();
 
 	UpdateTimer();
+
+#if !defined(HEADLESS) && defined(_WIN32)
+	InitOpenXR();
+#endif
 }
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
@@ -1303,10 +1305,7 @@ void CGlobalRendering::ConfigNotify(const std::string& key, const std::string& v
 		debugTargetsDirty = true;
 		return;
 	}
-	if (key == "VRDebugEyeSeparation") {
-		debugEyeSeparation = configHandler->GetFloat("VRDebugEyeSeparation");
-		return;
-	}
+
 #endif
 	winChgFrame = drawFrame + 1; //need to do on next frame since config mutex is locked inside ConfigNotify
 	forceDWMFlush = configHandler->GetInt("DWMFlush");
@@ -1825,6 +1824,17 @@ size_t CGlobalRendering::GetDebugTargetCount() const
 	return count;
 }
 
+float CGlobalRendering::GetDebugEyeSeparation() const
+{
+#if !defined(HEADLESS) && defined(_WIN32)
+	return GetOpenXREyeSeparation();
+#else
+	// Default fallback when OpenXR is not available
+	// Standard human IPD: 0.063m * 100 elmos/m = 6.3 elmos
+	return 6.3f;
+#endif
+}
+
 void CGlobalRendering::BindDebugTarget(size_t index)
 {
 #if !defined(HEADLESS) && defined(_WIN32)
@@ -2061,32 +2071,9 @@ bool CGlobalRendering::CreateDebugWindow(DebugRenderTarget& target, size_t index
 	else
 		target.title = fmt::format("{} [Eye {}]", baseTitle, index + 1);
 
-	const int offsetX = winPosX + winSizeX + 40;
-	const int offsetY = winPosY + 40 + static_cast<int>(index) * (defaultHeight + 20);
-
-	Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-	target.window = SDL_CreateWindow(target.title.c_str(), offsetX, offsetY, defaultWidth, defaultHeight, flags);
-	if (target.window == nullptr) {
-		LOG_L(L_WARNING, "[GR::%s] failed to create VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
-		return false;
-	}
-
-	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
-	target.context = SDL_GL_CreateContext(target.window);
-	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
-
-	if (target.context == nullptr) {
-		LOG_L(L_WARNING, "[GR::%s] failed to create GL context for VR debug window %u (%s)", __func__, static_cast<unsigned int>(index), SDL_GetError());
-		SDL_DestroyWindow(target.window);
-		target.window = nullptr;
-		return false;
-	}
-
-	SDL_GL_MakeCurrent(target.window, target.context);
-	SDL_GL_SetSwapInterval(0);
-	SDL_ShowWindow(target.window);
-	SDL_GL_MakeCurrent(sdlWindow, glContext);
-
+	// SDL Window creation removed for VR reset
+	target.window = nullptr;
+	target.context = nullptr;
 	return true;
 }
 
@@ -2110,10 +2097,10 @@ void CGlobalRendering::ResizeDebugTargets()
 
 		const int newWidth = std::max(1, viewSizeX / 2);
 		const int newHeight = std::max(1, viewSizeY / 2);
-		SDL_SetWindowSize(target.window, newWidth, newHeight);
-		const int offsetX = winPosX + winSizeX + 40;
-		const int offsetY = winPosY + 40 + static_cast<int>(i) * (newHeight + 20);
-		SDL_SetWindowPosition(target.window, offsetX, offsetY);
+		// SDL_SetWindowSize(target.window, newWidth, newHeight);
+		// const int offsetX = winPosX + winSizeX + 40;
+		// const int offsetY = winPosY + 40 + static_cast<int>(i) * (newHeight + 20);
+		// SDL_SetWindowPosition(target.window, offsetX, offsetY);
 
 		++readyTargets;
 	}
@@ -2123,23 +2110,13 @@ void CGlobalRendering::ResizeDebugTargets()
 
 void CGlobalRendering::PresentDebugTargetInternal(DebugRenderTarget& target)
 {
-	glFlush();
-	SDL_GL_MakeCurrent(target.window, target.context);
-
-	int wndW = 0;
-	int wndH = 0;
-	SDL_GetWindowSize(target.window, &wndW, &wndH);
-	wndW = std::max(wndW, 1);
-	wndH = std::max(wndH, 1);
-
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, target.fbo.GetId());
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	glViewport(0, 0, wndW, wndH);
-	glBlitFramebuffer(0, 0, target.framebufferSize.x, target.framebufferSize.y, 0, 0, wndW, wndH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-	SDL_GL_SwapWindow(target.window);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	SDL_GL_MakeCurrent(sdlWindow, glContext);
+	// glFlush();
+	// if (target.window && target.context) {
+	// 	SDL_GL_MakeCurrent(target.window, target.context);
+	// 	...
+	// 	SDL_GL_SwapWindow(target.window);
+	// }
+	// SDL_GL_MakeCurrent(sdlWindow, glContext);
 }
 #endif
 
@@ -2646,6 +2623,8 @@ bool CGlobalRendering::InitOpenXR()
 		xrEnumerateSwapchainImages(xrSwapchains[i].handle, imageCount, &imageCount, (XrSwapchainImageBaseHeader*)xrSwapchains[i].images.data());
 	}
 
+	debugRenderTargets.resize(viewCount);
+
 	LOG("[GR::%s] OpenXR initialized successfully", __func__);
 	return true;
 }
@@ -2662,11 +2641,17 @@ void CGlobalRendering::PollOpenXREvents()
 				if (sessionStateChanged->state == XR_SESSION_STATE_READY) {
 					XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
 					beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-					xrBeginSession(xrSession, &beginInfo);
-					xrSessionRunning = true;
+					XrResult res = xrBeginSession(xrSession, &beginInfo);
+					if (res == XR_SUCCESS) {
+						xrSessionRunning = true;
+						LOG("[GR::%s] OpenXR Session Started", __func__);
+					} else {
+						LOG_L(L_ERROR, "[GR::%s] Failed to begin OpenXR session: %s (%d)", __func__, GetXrResultString(res), res);
+					}
 				} else if (sessionStateChanged->state == XR_SESSION_STATE_STOPPING) {
 					xrEndSession(xrSession);
 					xrSessionRunning = false;
+					LOG("[GR::%s] OpenXR Session Stopped", __func__);
 				}
 			}
 		}
@@ -2694,6 +2679,8 @@ void CGlobalRendering::BeginVRFrame()
 		uint32_t viewCountOutput;
 		XrViewState viewState{XR_TYPE_VIEW_STATE};
 		xrLocateViews(xrSession, &viewLocateInfo, &viewState, (uint32_t)xrViews.size(), &viewCountOutput, xrViews.data());
+	} else {
+		LOG_L(L_WARNING, "[GR::%s] shouldRender is false", __func__);
 	}
 }
 
@@ -2724,7 +2711,146 @@ void CGlobalRendering::EndVRFrame()
 	endInfo.layerCount = xrFrameState.shouldRender ? 1 : 0;
 	endInfo.layers = layers;
 
-	xrEndFrame(xrSession, &endInfo);
+	XrResult res = xrEndFrame(xrSession, &endInfo);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] xrEndFrame failed: %s (%d)", __func__, GetXrResultString(res), res);
+	}
+}
+
+
+CMatrix44f CGlobalRendering::GetVRProjectionMatrix(size_t index) const
+{
+	if (index >= xrViews.size())
+		return CMatrix44f::Identity();
+
+	const XrFovf& fov = xrViews[index].fov;
+	const float tanLeft = tan(fov.angleLeft);
+	const float tanRight = tan(fov.angleRight);
+	const float tanDown = tan(fov.angleDown);
+	const float tanUp = tan(fov.angleUp);
+
+	const float nearZ = CGlobalRendering::MIN_ZNEAR_DIST;
+	const float farZ = CGlobalRendering::MAX_VIEW_RANGE;
+
+	const float width = tanRight - tanLeft;
+	const float height = tanUp - tanDown;
+
+	CMatrix44f mat;
+	mat[0] = 2.0f / width;
+	mat[4] = 0.0f;
+	mat[8] = (tanRight + tanLeft) / width;
+	mat[12] = 0.0f;
+
+	mat[1] = 0.0f;
+	mat[5] = 2.0f / height;
+	mat[9] = (tanUp + tanDown) / height;
+	mat[13] = 0.0f;
+
+	mat[2] = 0.0f;
+	mat[6] = 0.0f;
+	mat[10] = -(farZ + nearZ) / (farZ - nearZ);
+	mat[14] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
+
+	mat[3] = 0.0f;
+	mat[7] = 0.0f;
+	mat[11] = -1.0f;
+	mat[15] = 0.0f;
+
+	return mat;
+}
+
+bool CGlobalRendering::BindVRTarget(size_t index)
+{
+	if (!xrSessionRunning || index >= xrSwapchains.size())
+		return false;
+
+	// Ensure we have enough debug targets (or VR targets)
+	if (index >= debugRenderTargets.size()) {
+		LOG_L(L_ERROR, "[GR::%s] index %d >= debugRenderTargets.size() %d", __func__, index, debugRenderTargets.size());
+		return false; 
+	}
+
+	XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+	uint32_t imageIndex;
+	XrResult res = xrAcquireSwapchainImage(xrSwapchains[index].handle, &acquireInfo, &imageIndex);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] xrAcquireSwapchainImage failed for index %d: %s (%d)", __func__, index, GetXrResultString(res), res);
+		return false;
+	}
+
+	XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+	waitInfo.timeout = XR_INFINITE_DURATION;
+	res = xrWaitSwapchainImage(xrSwapchains[index].handle, &waitInfo);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] xrWaitSwapchainImage failed for index %d: %s (%d)", __func__, index, GetXrResultString(res), res);
+		// Try to release if wait failed, to avoid getting stuck?
+		// xrReleaseSwapchainImage(xrSwapchains[index].handle, ...);
+		return false;
+	}
+
+	auto& target = debugRenderTargets[index];
+	int32_t width = xrSwapchains[index].width;
+	int32_t height = xrSwapchains[index].height;
+	bool sizeChanged = (target.framebufferSize.x != width || target.framebufferSize.y != height);
+
+	if (!target.fbo.IsValid()) {
+		target.fbo.Init(false);
+		sizeChanged = true;
+	}
+	
+	target.fbo.Bind();
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, xrSwapchains[index].images[imageIndex].image, 0);
+	
+	if (sizeChanged) {
+		target.fbo.CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, width, height);
+		target.framebufferSize = {width, height};
+	}
+
+	// Explicitly set viewport and scissor to the swapchain size
+	glViewport(0, 0, width, height);
+	glScissor(0, 0, width, height);
+	glEnable(GL_SCISSOR_TEST);
+
+	drawingToDebugTarget = true;
+	boundDebugFBO = target.fbo.GetId();
+	return true;
+}
+
+void CGlobalRendering::UnbindVRTarget(size_t index)
+{
+	if (!xrSessionRunning || index >= xrSwapchains.size())
+		return;
+
+	XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+	XrResult res = xrReleaseSwapchainImage(xrSwapchains[index].handle, &releaseInfo);
+	if (res != XR_SUCCESS) {
+		LOG_L(L_ERROR, "[GR::%s] xrReleaseSwapchainImage failed for index %d: %s (%d)", __func__, index, GetXrResultString(res), res);
+	}
+
+	drawingToDebugTarget = false;
+	boundDebugFBO = 0;
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+float CGlobalRendering::GetOpenXREyeSeparation() const
+{
+	// Engine scale: approximately 100 elmos per meter
+	// Adjust this constant if your engine uses a different scale
+	constexpr float METERS_TO_ELMOS = 8.0f;
+	
+	// Return a default value if OpenXR is not active or we don't have 2 views
+	if (!xrSessionRunning || xrViews.size() < 2)
+		return 0.063f * METERS_TO_ELMOS; // Standard human IPD: 0.063m
+	
+	// Get left and right eye positions from the view poses
+	const XrPosef& leftPose = xrViews[0].pose;
+	const XrPosef& rightPose = xrViews[1].pose;
+	
+	// IPD is the horizontal distance between the eyes (X-axis)
+	// OpenXR provides this in meters, convert to elmos for camera positioning
+	const float ipdMeters = std::abs(rightPose.position.x - leftPose.position.x);
+	return ipdMeters * METERS_TO_ELMOS;
 }
 
 #endif
+

@@ -116,12 +116,26 @@ public:
 	void RefreshDebugRenderTargets();
 
 #if !defined(HEADLESS) && defined(_WIN32)
+	struct XrSwapchainData {
+		XrSwapchain handle;
+		int32_t width;
+		int32_t height;
+		std::vector<XrSwapchainImageOpenGLKHR> images;
+	};
+
 	bool InitOpenXR();
 	void PollOpenXREvents();
 	void BeginVRFrame();
 	void EndVRFrame();
 	bool IsVRActive() const { return xrSessionRunning; }
+	bool ShouldRenderVR() const { return xrFrameState.shouldRender; }
 	const XrView& GetVRView(size_t index) const { return xrViews[index]; }
+	size_t GetVRViewCount() const { return xrViews.size(); }
+	CMatrix44f GetVRProjectionMatrix(size_t index) const;
+	const XrSwapchainData& GetVRSwapchain(size_t index) const { return xrSwapchains[index]; }
+	bool BindVRTarget(size_t index);
+	void UnbindVRTarget(size_t index);
+	float GetOpenXREyeSeparation() const;
 #endif
 
 #ifndef HEADLESS
@@ -132,7 +146,7 @@ public:
 	void BindMainFramebuffer() const;
 	bool IsDrawingToDebugTarget() const { return drawingToDebugTarget; }
 	uint32_t GetBoundDebugFBO() const { return boundDebugFBO; }
-	float GetDebugEyeSeparation() const { return debugEyeSeparation; }
+	float GetDebugEyeSeparation() const;
 #endif
 
 	void LoadViewport();
@@ -479,27 +493,21 @@ private:
 	static constexpr inline const char* ysKeys[2] = { "YResolutionWindowed", "YResolution" };
 
 #ifndef HEADLESS
-	std::array<DebugRenderTarget, 2> debugRenderTargets;
+	std::vector<DebugRenderTarget> debugRenderTargets;
 	bool enableVRDebugTargets = false;
 	bool debugTargetsDirty = false;
 	bool debugTargetsInitialized = false;
-	float debugEyeSeparation = 6.40f;
 	// tracking current debug draw state so FBO::Unbind can restore the correct target
 	mutable bool drawingToDebugTarget = false;
 	mutable uint32_t boundDebugFBO = 0;
 
-#ifdef _WIN32
+#if !defined(HEADLESS) && defined(_WIN32)
 	XrInstance xrInstance = XR_NULL_HANDLE;
 	XrSystemId xrSystemId = XR_NULL_SYSTEM_ID;
 	XrSession xrSession = XR_NULL_HANDLE;
 	XrSpace xrAppSpace = XR_NULL_HANDLE;
 
-	struct XrSwapchainData {
-		XrSwapchain handle;
-		int32_t width;
-		int32_t height;
-		std::vector<XrSwapchainImageOpenGLKHR> images;
-	};
+
 	std::vector<XrSwapchainData> xrSwapchains;
 	std::vector<XrView> xrViews;
 	std::vector<XrViewConfigurationView> xrConfigViews;

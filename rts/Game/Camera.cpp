@@ -234,16 +234,20 @@ void CCamera::UpdateMatrices(uint32_t vsx, uint32_t vsy, float var)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	// recalculate the projection transform
-	switch (projType) {
-		case PROJTYPE_PERSP: {
-			gluPerspectiveSpring(var, frustum.scales.z, frustum.scales.w);
-		} break;
-		case PROJTYPE_ORTHO: {
-			glOrthoScaledSpring(vsx, vsy, frustum.scales.z, frustum.scales.w);
-		} break;
-		default: {
-			assert(false);
-		} break;
+	if (explicitProj) {
+		explicitProj = false;
+	} else {
+		switch (projType) {
+			case PROJTYPE_PERSP: {
+				gluPerspectiveSpring(var, frustum.scales.z, frustum.scales.w);
+			} break;
+			case PROJTYPE_ORTHO: {
+				glOrthoScaledSpring(vsx, vsy, frustum.scales.z, frustum.scales.w);
+			} break;
+			default: {
+				assert(false);
+			} break;
+		}
 	}
 
 

@@ -159,6 +159,7 @@ public:
 	const FrustumLine* GetNegFrustumLines() const { return &frustumLines[FRUSTUM_SIDE_NEG][0]; }
 
 	void SetClipCtrlMatrix(const CMatrix44f& mat) { clipControlMatrix = mat; }
+	void SetExplicitProjectionMatrix(const CMatrix44f& mat) { projectionMatrix = clipControlMatrix * mat; explicitProj = true; }
 	void SetProjMatrix(const CMatrix44f& mat) { projectionMatrix = mat; }
 	void SetViewMatrix(const CMatrix44f& mat) {
 		viewMatrix = mat;
@@ -309,6 +310,7 @@ private:
 
 	uint8_t inViewPlanesMask;
 
+	bool explicitProj = false;
 	bool movState[10]; // fwd, back, left, right, up, down, fast, slow, tilt, reset
 	bool rotState[4]; // unused
 };
