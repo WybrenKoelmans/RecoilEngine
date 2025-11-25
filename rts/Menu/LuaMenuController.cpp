@@ -2,6 +2,10 @@
 
 #include "LuaMenuController.h"
 
+#include "Rendering/GL/FBO.h"
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/GL/myGL.h"
+
 #include "Game/GlobalUnsynced.h"
 #include "Game/UI/InfoConsole.h"
 #include "Game/UI/MouseHandler.h"
@@ -118,12 +122,57 @@ bool CLuaMenuController::Draw()
 
 	if (allowDraw || forceDraw) {
 		globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
-		ClearScreen();
+		
+		if (FBO::IsSupported() && globalRendering->GetUIFBO()) {
+			globalRendering->GetUIFBO()->Bind();
+			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(0, 1, 0, 1, -1, 1);
+			glMatrixMode(GL_MODELVIEW);
+			glLoadIdentity();
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glEnable(GL_TEXTURE_2D);
+			glColor3f(1, 1, 1);
+		} else {
+			ClearScreen();
+		}
 
 		eventHandler.DrawGenesis();
 		eventHandler.DrawScreen();
 		mouse->DrawCursor();
 		eventHandler.DrawScreenPost();
+
+		if (FBO::IsSupported() && globalRendering->GetUIFBO()) {
+			FBO::Unbind();
+
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glBindTexture(GL_TEXTURE_2D, globalRendering->uiTexture);
+			glEnable(GL_TEXTURE_2D);
+
+			glMatrixMode(GL_PROJECTION);
+			glPushMatrix();
+			glLoadIdentity();
+			glMatrixMode(GL_MODELVIEW);
+			glPushMatrix();
+			glLoadIdentity();
+
+			glBegin(GL_QUADS);
+			glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
+			glTexCoord2f(1.0f, 0.0f); glVertex2f( 1.0f, -1.0f);
+			glTexCoord2f(1.0f, 1.0f); glVertex2f( 1.0f,  1.0f);
+			glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f,  1.0f);
+			glEnd();
+
+			glPopMatrix();
+			glMatrixMode(GL_PROJECTION);
+			glPopMatrix();
+			glMatrixMode(GL_MODELVIEW);
+		}
 
 		lastDrawFrameTime = spring_gettime();
 		return true;
