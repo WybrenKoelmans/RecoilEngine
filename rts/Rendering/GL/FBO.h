@@ -19,6 +19,9 @@
 class FBO
 {
 public:
+	GLuint GetAttachedTextureID() const { return attachedTextureID; }
+	GLsizei GetWidth() const { return width; }
+	GLsizei GetHeight() const { return height; }
 	/**
 	 * @brief IsSupported
 	 *
@@ -158,6 +161,9 @@ public:
 
 
 private:
+	GLuint attachedTextureID = 0;
+	GLsizei width = 0;
+	GLsizei height = 0;
 	bool valid = false;
 
 	/**

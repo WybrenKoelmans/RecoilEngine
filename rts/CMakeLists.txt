@@ -37,6 +37,11 @@ endif()
 ### give error when not found
 find_package_static(DevIL REQUIRED)
 
+### VR
+if    (WIN32)
+	find_package(OpenXR REQUIRED)
+endif (WIN32)
+
 ### Assemble common include dirs
 include_directories(BEFORE lib)
 include_directories(BEFORE lib/lua/include)

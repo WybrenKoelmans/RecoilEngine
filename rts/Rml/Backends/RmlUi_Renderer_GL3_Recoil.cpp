@@ -31,9 +31,12 @@
 #include "RmlUi_Renderer_GL3_Recoil.h"
 #include <RmlUi/Core/Log.h>
 
+#include "Rendering/GlobalRendering.h"
 #include "Rendering/GL/VAO.h"
 #include "Rendering/GL/VBO.h"
 #include "Rendering/GL/myGL.h"
+
+#include "Rendering/GL/FBO.h"
 
 #include "Rendering/Shaders/Shader.h"
 #include "Rendering/Shaders/ShaderHandler.h"
@@ -808,8 +811,14 @@ void RenderInterface_GL3_Recoil::EndFrame()
 	glBlitFramebuffer(0, 0, fb_active.width, fb_active.height, 0, 0, fb_postprocess.width, fb_postprocess.height,
 					  GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-	// Draw to backbuffer
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	// Draw to uiFBO
+	if (globalRendering->GetUIFBO()) {
+		globalRendering->GetUIFBO()->Bind();
+		glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+	} else {
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
 
 	// Assuming we have an opaque background, we can just write to it with the premultiplied alpha blend mode and we'll get the correct result.
 	// Instead, if we had a transparent destination that didn't use premultiplied alpha, we would need to perform a manual un-premultiplication step.

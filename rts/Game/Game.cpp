@@ -1504,8 +1504,13 @@ bool CGame::Draw() {
 		worldDrawer.GenerateIBLTextures();
 
 		// restore back to the default FBO / Viewport
-		if (FBO::IsSupported())
-			FBO::Unbind();
+		if (FBO::IsSupported()) {
+			if (globalRendering->GetMainFBO()) {
+				globalRendering->GetMainFBO()->Bind();
+			} else {
+				FBO::Unbind();
+			}
+		}
 		camera->LoadViewport();
 
 		worldDrawer.Draw();
@@ -1517,6 +1522,12 @@ bool CGame::Draw() {
 		SCOPED_GL_DEBUGGROUP("Draw::Screen");
 		if (CUnitDrawer::UseScreenIcons())
 			unitDrawer->DrawUnitIconsScreen();
+
+		if (FBO::IsSupported() && globalRendering->GetUIFBO()) {
+			globalRendering->GetUIFBO()->Bind();
+			glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		}
 
 		eventHandler.DrawScreenEffects();
 
@@ -1530,6 +1541,37 @@ bool CGame::Draw() {
 		mouse->DrawCursor();
 
 		eventHandler.DrawScreenPost();
+
+		if (FBO::IsSupported() && globalRendering->GetUIFBO()) {
+			FBO::Unbind();
+
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glBindTexture(GL_TEXTURE_2D, globalRendering->uiTexture);
+			glEnable(GL_TEXTURE_2D);
+
+			// Draw a full-screen quad with the UI texture
+			glMatrixMode(GL_PROJECTION);
+			glPushMatrix();
+			glLoadIdentity();
+			glMatrixMode(GL_MODELVIEW);
+			glPushMatrix();
+			glLoadIdentity();
+
+			glBegin(GL_QUADS);
+			glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
+			glTexCoord2f(1.0f, 0.0f); glVertex2f( 1.0f, -1.0f);
+			glTexCoord2f(1.0f, 1.0f); glVertex2f( 1.0f,  1.0f);
+			glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f,  1.0f);
+			glEnd();
+
+			glPopMatrix();
+			glMatrixMode(GL_PROJECTION);
+			glPopMatrix();
+			glMatrixMode(GL_MODELVIEW);
+
+			glDisable(GL_TEXTURE_2D);
+		}
 	}
 
 	glEnable(GL_DEPTH_TEST);

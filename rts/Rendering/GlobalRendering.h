@@ -7,6 +7,8 @@
 #include <memory>
 #include <array>
 
+#include "Rendering/GL/myGL.h"
+
 #include "System/Matrix44f.h"
 #include "System/creg/creg_cond.h"
 #include "System/Misc/SpringTime.h"
@@ -18,6 +20,8 @@ struct SDL_version;
 struct SDL_Rect;
 struct SDL_Window;
 typedef void* SDL_GLContext;
+
+class FBO;
 
 /**
  * @brief Globally accessible unsynced, rendering related data
@@ -420,9 +424,14 @@ private:
 private:
 	static constexpr inline const char* xsKeys[2] = { "XResolutionWindowed", "XResolution" };
 	static constexpr inline const char* ysKeys[2] = { "YResolutionWindowed", "YResolution" };
+public:
+	FBO* mainFBO = nullptr;
+	FBO* uiFBO = nullptr;
+	GLuint uiTexture = 0;
+	FBO* GetMainFBO() { return mainFBO; }
+	FBO* GetUIFBO() { return uiFBO; }
 };
 
 extern CGlobalRendering* globalRendering;
 
 #endif /* _GLOBAL_RENDERING_H */
-

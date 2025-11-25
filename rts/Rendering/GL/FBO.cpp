@@ -313,6 +313,8 @@ void FBO::Bind()
 /**
  * Unbinds the framebuffer from the current context
  */
+#include "Rendering/GlobalRendering.h"
+
 void FBO::Unbind()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
@@ -326,7 +328,12 @@ void FBO::Unbind()
 	//   do stuff
 	// FBO::Unbind(); <- not redundant!
 	//   continue with screen FBO
-	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+
+	if (globalRendering && globalRendering->GetMainFBO()) {
+		globalRendering->GetMainFBO()->Bind();
+	} else {
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+	}
 }
 
 bool FBO::Blit(int32_t fromID, int32_t toID, const std::array<int, 4>& srcRect, const std::array<int, 4>& dstRect, uint32_t mask, uint32_t filter)
@@ -433,6 +440,16 @@ void FBO::AttachTexture(const GLuint texId, const GLenum texTarget, const GLenum
 #ifndef HEADLESS
 	assert(GetCurrentBoundFBO() == fboId);
 #endif
+	attachedTextureID = texId;
+	// Set width and height if attaching a 2D texture
+	if (texTarget == GL_TEXTURE_2D) {
+		GLint texWidth = 0, texHeight = 0;
+		glBindTexture(GL_TEXTURE_2D, texId);
+		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texWidth);
+		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &texHeight);
+		width = texWidth;
+		height = texHeight;
+	}
 	if (texTarget == GL_TEXTURE_1D) {
 		glFramebufferTexture1DEXT(GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_1D, texId, mipLevel);
 	} else if (texTarget == GL_TEXTURE_3D) {
@@ -529,6 +546,9 @@ void FBO::CreateRenderBuffer(const GLenum attachment, const GLenum format, const
 	glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, rbo);
 	glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, format, width, height);
 	glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, attachment, GL_RENDERBUFFER_EXT, rbo);
+	// Store width and height
+	this->width = width;
+	this->height = height;
 	rboIDs.push_back(rbo);
 }
 
@@ -550,6 +570,9 @@ void FBO::CreateRenderBufferMultisample(const GLenum attachment, const GLenum fo
 	glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, rbo);
 	glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER_EXT, samples, format, width, height);
 	glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, attachment, GL_RENDERBUFFER_EXT, rbo);
+	// Store width and height
+	this->width = width;
+	this->height = height;
 	rboIDs.push_back(rbo);
 }
 

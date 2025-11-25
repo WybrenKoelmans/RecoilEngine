@@ -388,6 +388,10 @@ CGlobalRendering::~CGlobalRendering()
 
 void CGlobalRendering::PreKill()
 {
+	spring::SafeDelete(mainFBO);
+	spring::SafeDelete(uiFBO);
+	glDeleteTextures(1, &uiTexture);
+	uiTexture = 0;
 	UniformConstants::GetInstance().Kill(); //unsafe to kill in ~CGlobalRendering()
 	RenderBuffer::KillStatic();
 	GL::shapes.Kill();
@@ -688,7 +692,52 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 		RenderBuffer::SwapRenderBuffers(); //all RBs are swapped here
 		IStreamBufferConcept::PutBufferLocks();
 
-		//https://stackoverflow.com/questions/68480028/supporting-opengl-screen-capture-by-third-party-applications
+		// Blit mainFBO to default framebuffer (FBO 0)
+		if (mainFBO) {
+			glBindFramebuffer(GL_READ_FRAMEBUFFER_EXT, mainFBO->GetId());
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER_EXT, 0);
+			glBlitFramebufferEXT(0, 0, mainFBO->GetWidth(), mainFBO->GetHeight(),
+								 0, 0, viewSizeX, viewSizeY,
+								 GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		}
+
+		// Composite uiFBO over default framebuffer
+		if (uiFBO) {
+			// We need to draw a quad with the UI texture because standard blit doesn't support blending
+			glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0);
+			
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable(GL_DEPTH_TEST);
+			
+			glMatrixMode(GL_PROJECTION);
+			glPushMatrix();
+			glLoadIdentity();
+			glOrtho(0, 1, 0, 1, -1, 1);
+			
+			glMatrixMode(GL_MODELVIEW);
+			glPushMatrix();
+			glLoadIdentity();
+			
+			glEnable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, uiFBO->GetAttachedTextureID());
+			
+			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, 0.0f);
+				glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, 0.0f);
+				glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
+				glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 1.0f);
+			glEnd();
+			
+			glDisable(GL_TEXTURE_2D);
+			
+			glPopMatrix();
+			glMatrixMode(GL_PROJECTION);
+			glPopMatrix();
+			glMatrixMode(GL_MODELVIEW);
+		}
+
 		glBindFramebuffer(GL_READ_FRAMEBUFFER_EXT, 0);
 		
 		#ifdef _WIN32
@@ -1695,12 +1744,59 @@ void CGlobalRendering::UpdateGLGeometry()
 	UpdatePixelGeometry();
 	UpdateScreenMatrices();
 
+	if (mainFBO) {
+		mainFBO->Bind();
+		mainFBO->DetachAll();
+		mainFBO->CreateRenderBuffer(GL_COLOR_ATTACHMENT0_EXT, GL_RGBA8, winSizeX, winSizeY);
+		mainFBO->CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, winSizeX, winSizeY);
+		if (!mainFBO->CheckStatus("MainFBO")) {
+			LOG_L(L_ERROR, "Main FBO resizing failed!");
+		}
+	}
+	
+	if (uiFBO) {
+		uiFBO->Bind();
+		uiFBO->DetachAll();
+		// UI needs a texture for composition, not just a renderbuffer
+		glBindTexture(GL_TEXTURE_2D, uiTexture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, winSizeX, winSizeY, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		uiFBO->AttachTexture(uiTexture, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0_EXT);
+		uiFBO->CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, winSizeX, winSizeY);
+		if (!uiFBO->CheckStatus("UIFBO")) {
+			LOG_L(L_ERROR, "UI FBO resizing failed!");
+		}
+	}
+	FBO::Unbind();
+
 	LOG("[GR::%s][2] winSize=<%d,%d>", __func__, winSizeX, winSizeY);
 }
 
 void CGlobalRendering::InitGLState()
 {
 	LOG("[GR::%s]", __func__);
+
+	if (!mainFBO) 	mainFBO = new FBO();
+	mainFBO->Bind();
+	mainFBO->CreateRenderBuffer(GL_COLOR_ATTACHMENT0_EXT, GL_RGBA8, winSizeX, winSizeY);
+	mainFBO->CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, winSizeX, winSizeY);
+	if (!mainFBO->CheckStatus("MainFBO")) {
+		LOG_L(L_ERROR, "Main FBO creation failed!");
+	}
+	
+	uiFBO = new FBO();
+	uiFBO->Bind();
+	// UI needs a texture for composition
+	glGenTextures(1, &uiTexture);
+	glBindTexture(GL_TEXTURE_2D, uiTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, winSizeX, winSizeY, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	uiFBO->AttachTexture(uiTexture, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0_EXT);
+	uiFBO->CreateRenderBuffer(GL_DEPTH_STENCIL_ATTACHMENT, GL_DEPTH24_STENCIL8, winSizeX, winSizeY);
+	if (!uiFBO->CheckStatus("UIFBO")) {
+		LOG_L(L_ERROR, "UI FBO creation failed!");
+	}
+	FBO::Unbind();
 
 	glShadeModel(GL_SMOOTH);
 
