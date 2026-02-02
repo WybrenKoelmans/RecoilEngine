@@ -11,7 +11,7 @@ find_package_static(ZLIB 1.2.7 REQUIRED)
 
 list(APPEND unitsync_libs ${CMAKE_DL_LIBS})
 list(APPEND unitsync_libs 7zip prd::jsoncpp lua headlessStubs archives_nothreadpool nowide::nowide)
-list(APPEND unitsync_libs ZLIB::ZLIB)
+list(APPEND unitsync_libs ZLIB::ZLIB simdjson)
 list(APPEND unitsync_libs ${SPRING_MINIZIP_LIBRARY})
 
 ### base64 from pr-downloader
@@ -48,6 +48,8 @@ set(ENGINE_SRC_ROOT "../../rts")
 
 include_directories(${SPRING_MINIZIP_INCLUDE_DIR})
 include_directories(${ENGINE_SRC_ROOT}/lib)
+include_directories(${ENGINE_SRC_ROOT}/lib/simdjson/include)
+include_directories(${ENGINE_SRC_ROOT}/lib/simdjson/singleheader)
 include_directories(${ENGINE_SRC_ROOT}/lib/lua/include)
 include_directories(${ENGINE_SRC_ROOT}/lib/7zip)
 include_directories(${ENGINE_SRC_ROOT}/lib/nowide/include)

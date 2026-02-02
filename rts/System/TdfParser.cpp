@@ -3,12 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <iomanip>
 #include <stdexcept>
 #include <sstream>
 #include <vector>
 #include <regex>
 
-
+#include "simdjson.h"
 #include "Lua/LuaParser.h"
 #include "System/TdfParser.h"
 #include "System/StringUtil.h"
@@ -27,6 +28,50 @@ void TdfParser::TdfSection::print(std::ostream & out) const
 	for (const auto& value: values) {
 		out << value.first << "=" << value.second << ";\n";
 	}
+}
+
+static void EscapeJSONString(std::ostream& out, const std::string& str) {
+	for (char c : str) {
+		switch (c) {
+			case '"': out << "\\\""; break;
+			case '\\': out << "\\\\"; break;
+			case '\b': out << "\\b"; break;
+			case '\f': out << "\\f"; break;
+			case '\n': out << "\\n"; break;
+			case '\r': out << "\\r"; break;
+			case '\t': out << "\\t"; break;
+			default:
+				if (static_cast<unsigned char>(c) < '\x20') {
+					out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c << std::dec;
+				} else {
+					out << c;
+				}
+		}
+	}
+}
+
+void TdfParser::TdfSection::printJSON(std::ostream & out) const
+{
+	out << "{";
+	bool first = true;
+	for (const auto& value: values) {
+		if (!first) out << ",";
+		first = false;
+		out << "\"";
+		EscapeJSONString(out, value.first);
+		out << "\": \"";
+		EscapeJSONString(out, value.second);
+		out << "\"";
+	}
+	for (const auto& section: sections) {
+		if (!first) out << ",";
+		first = false;
+		out << "\"";
+		EscapeJSONString(out, section.first);
+		out << "\": ";
+		section.second->printJSON(out);
+	}
+	out << "}";
 }
 
 TdfParser::TdfSection* TdfParser::TdfSection::construct_subsection(const std::string& name)
@@ -98,6 +143,10 @@ void TdfParser::print(std::ostream & out) const {
 	root_section.print(out);
 }
 
+void TdfParser::printJSON(std::ostream & out) const {
+	root_section.printJSON(out);
+}
+
 
 void TdfParser::ParseLuaTable(const LuaTable& table, TdfSection* currentSection) {
 	std::vector<std::string> keys;
@@ -125,7 +174,90 @@ void TdfParser::ParseLuaTable(const LuaTable& table, TdfSection* currentSection)
 }
 
 
+// Helper to check for JSON format
+static bool IsJson(const char* buf, size_t size) {
+	size_t i = 0;
+	while(i < size && std::isspace(static_cast<unsigned char>(buf[i]))) i++;
+	if (i < size && buf[i] == '{') return true;
+	return false;
+}
+
+static void ParseJsonToTdf(simdjson::dom::element doc, TdfParser::TdfSection* section) {
+	if (doc.is_object()) {
+		for (auto field : doc.get_object()) {
+			std::string keyStr(field.key);
+			simdjson::dom::element value = field.value;
+
+			if (value.is_object()) {
+				ParseJsonToTdf(value, section->construct_subsection(keyStr));
+			} else if (value.is_array()) {
+				std::string valStr;
+				for (auto v : value.get_array()) {
+					if (!valStr.empty()) valStr += " ";
+					if (v.is_string()) {
+						std::string_view sv;
+						if (v.get_string().get(sv) == simdjson::SUCCESS) valStr += std::string(sv);
+					} else if (v.is_double()) {
+						double d;
+						if (v.get_double().get(d) == simdjson::SUCCESS) {
+							std::stringstream ss; ss << d;
+							valStr += ss.str();
+						}
+					} else if (v.is_int64()) {
+						int64_t i;
+						if (v.get_int64().get(i) == simdjson::SUCCESS) valStr += std::to_string(i);
+					} else if (v.is_uint64()) {
+						uint64_t u;
+						if (v.get_uint64().get(u) == simdjson::SUCCESS) valStr += std::to_string(u);
+					} else if (v.is_bool()) {
+						bool b;
+						if (v.get_bool().get(b) == simdjson::SUCCESS) valStr += (b ? "1" : "0");
+					}
+				}
+				section->add_name_value(keyStr, valStr);
+			} else {
+				std::string valStr;
+				if (value.is_string()) {
+					std::string_view sv;
+					if (value.get_string().get(sv) == simdjson::SUCCESS) valStr = std::string(sv);
+				} else if (value.is_double()) {
+					double d;
+					if (value.get_double().get(d) == simdjson::SUCCESS) {
+						std::stringstream ss; ss << d;
+						valStr = ss.str();
+					}
+				} else if (value.is_int64()) {
+					int64_t i;
+					if (value.get_int64().get(i) == simdjson::SUCCESS) valStr = std::to_string(i);
+				} else if (value.is_uint64()) {
+					uint64_t u;
+					if (value.get_uint64().get(u) == simdjson::SUCCESS) valStr = std::to_string(u);
+				} else if (value.is_bool()) {
+					bool b;
+					if (value.get_bool().get(b) == simdjson::SUCCESS) valStr = (b ? "1" : "0");
+				}
+				section->add_name_value(keyStr, valStr);
+			}
+		}
+	}
+}
+
 void TdfParser::ParseBuffer(const char* buf, size_t size) {
+	if (IsJson(buf, size)) {
+		simdjson::dom::parser parser;
+		simdjson::dom::element doc;
+		simdjson::padded_string padded(buf, size);
+		if (parser.parse(padded).get(doc) == simdjson::SUCCESS) {
+			ParseJsonToTdf(doc, GetRootSection());
+			
+			// We mimic TDF behavior where everything is lowercased if needed by using add_name_value / construct_subsection
+			// We also need to process the root section to apply unescaping/lowercasing if TDF parser does it recursively. 
+			// But helper already calls construct_subsection/add_name_value which handle casing.
+			return;
+		}
+		// If JSON parse failed, we fall through to TDF parser which will likely fail too, but correct behavior is to try.
+	}
+
 	CVFSHandler::GrabLock();
 
 	vfsHandler->SetName("TDFParserVFS");

@@ -88,6 +88,7 @@ set(SIMDJSON_IMPLEMENTATION_LASX     OFF CACHE BOOL "forced by Recoil build env"
 set(SIMDJSON_ENABLE_THREADS     OFF CACHE BOOL "forced by Recoil build env" FORCE)
 set(SIMDJSON_EXCEPTIONS     ON CACHE BOOL "forced by Recoil build env" FORCE)
 ADD_SUBDIRECTORY(simdjson)
+set_property(TARGET simdjson PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # fastgltf
 set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "forced by Recoil build env" FORCE)

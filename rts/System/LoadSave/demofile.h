@@ -21,7 +21,7 @@
  * The current demofile version. Only change on major modifications for which
  * appending stuff to DemoFileHeader is not sufficient.
  */
-#define DEMOFILE_VERSION 5
+#define DEMOFILE_VERSION 6
 
 #pragma pack(push, 1)
 

@@ -9,6 +9,7 @@
 #include "base64.h"
 #include "Game/GameVersion.h"
 #include "Sim/Misc/TeamStatistics.h"
+#include "System/TdfParser.h"
 #include "System/TimeUtil.h"
 #include "System/StringUtil.h"
 #include "System/FileSystem/DataDirsAccess.h"
@@ -109,18 +110,37 @@ void CDemoRecorder::WriteSetupText(const std::string& text)
 	LOG_L(L_INFO, "[CDemoRecorder::%s] SetupText=\"%s\"", __func__,
 		base64_encode(reinterpret_cast<const uint8_t*>(text.c_str()), text.size()).c_str());
 
-	int length = text.length();
-	while (length > 0 && text[length - 1] == '\0') {
+	std::string textToWrite = text;
+
+	// Check if input is TDF and convert to JSON if so
+	size_t i = 0;
+	while(i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) i++;
+	const bool isJson = (i < text.size() && text[i] == '{');
+
+	if (!isJson) {
+		try {
+			TdfParser parser(text.c_str(), text.size());
+			std::ostringstream jsonStream;
+			parser.printJSON(jsonStream);
+			textToWrite = jsonStream.str();
+			LOG_L(L_INFO, "[CDemoRecorder::%s] Wrote JSON \"%s\"", __func__, textToWrite.c_str());
+		} catch (const std::exception& e) {
+			LOG_L(L_WARNING, "[CDemoRecorder::%s] Failed to convert TDF to JSON: %s", __func__, e.what());
+		}
+	}
+
+	int length = textToWrite.length();
+	while (length > 0 && textToWrite[length - 1] == '\0') {
 		--length;
 	}
 
 	if (length <= 0) {
-		LOG_L(L_ERROR, "[CDemoRecorder::%s] Invalid game setup text (len %d):\n%s", __func__, static_cast<int32_t>(text.length()), text.c_str());
+		LOG_L(L_ERROR, "[CDemoRecorder::%s] Invalid game setup text (len %d):\n%s", __func__, static_cast<int32_t>(textToWrite.length()), textToWrite.c_str());
 		throw std::runtime_error("Invalid game setup text");
 	}
 
 	fileHeader.scriptSize = length;
-	demoStreams[isServerDemo].append(text.c_str(), length);
+	demoStreams[isServerDemo].append(textToWrite.c_str(), length);
 }
 
 void CDemoRecorder::SaveToDemo(const unsigned char* buf, const unsigned length, const float modGameTime)

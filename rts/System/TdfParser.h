@@ -31,6 +31,7 @@ public:
 
 		TdfSection* construct_subsection(const std::string& name);
 		void print(std::ostream& out) const;
+		void printJSON(std::ostream& out) const;
 		bool remove(const std::string& key, bool caseSensitive = true);
 		void add_name_value(const std::string& name, const std::string& value);
 
@@ -47,6 +48,7 @@ public:
 	virtual ~TdfParser();
 
 	void print(std::ostream& out) const;
+	void printJSON(std::ostream& out) const;
 
 	void LoadFile(std::string const& file);
 	void LoadBuffer(const char* buffer, size_t size);
