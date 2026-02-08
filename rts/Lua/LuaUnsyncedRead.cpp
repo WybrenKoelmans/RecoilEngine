@@ -66,6 +66,7 @@
 #include "System/Config/ConfigVariable.h"
 #include "System/Input/KeyInput.h"
 #include "System/LoadSave/DemoReader.h"
+#include "System/LoadSave/DemoRecorder.h"
 #include "System/Log/DefaultFilter.h"
 #include "System/Platform/SDL1_keysym.h"
 #include "System/Platform/Misc.h"
@@ -102,6 +103,7 @@ bool LuaUnsyncedRead::PushEntries(lua_State* L)
 	REGISTER_LUA_CFUNC(GetReplayLength);
 
 	REGISTER_LUA_CFUNC(GetGameName);
+	REGISTER_LUA_CFUNC(GetDemoName);
 	REGISTER_LUA_CFUNC(GetMenuName);
 
 	REGISTER_LUA_CFUNC(GetProfilerTimeRecord);
@@ -513,6 +515,37 @@ int LuaUnsyncedRead::GetGameName(lua_State* L)
 {
 	lua_pushstring(L, modInfo.humanNameVersioned.c_str());
 	return 1;
+}
+
+/***
+ *
+ * @function Spring.GetDemoName
+ *
+ * @return string name
+ */
+int LuaUnsyncedRead::GetDemoName(lua_State* L)
+{
+	if (clientNet != nullptr) {
+		const CDemoRecorder* dr = clientNet->GetDemoRecorder();
+
+		if (dr != nullptr) {
+			lua_pushstring(L, dr->GetName().c_str());
+			return 1;
+		}
+	}
+
+	if (gameServer != nullptr) {
+		if (gameServer->GetDemoReader()) {
+			lua_pushstring(L, gameServer->GetDemoReader()->GetName().c_str());
+			return 1;
+		}
+		if (gameServer->GetDemoRecorder()) {
+			lua_pushstring(L, gameServer->GetDemoRecorder()->GetName().c_str());
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 /***

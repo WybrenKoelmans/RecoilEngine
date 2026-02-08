@@ -314,6 +314,7 @@ bool CLuaMenu::LoadUnsyncedReadFunctions(lua_State* L)
 	REGISTER_SCOPED_LUA_CFUNC(LuaUnsyncedRead, GetConfigParams);
 
 	REGISTER_SCOPED_LUA_CFUNC(LuaUnsyncedRead, GetGameName);
+	REGISTER_SCOPED_LUA_CFUNC(LuaUnsyncedRead, GetDemoName);
 
 	REGISTER_SCOPED_LUA_CFUNC(LuaUnsyncedRead, GetConfigInt);
 	REGISTER_SCOPED_LUA_CFUNC(LuaUnsyncedRead, GetConfigFloat);
