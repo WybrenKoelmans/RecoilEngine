@@ -103,7 +103,8 @@ bool LuaUnsyncedRead::PushEntries(lua_State* L)
 	REGISTER_LUA_CFUNC(GetReplayLength);
 
 	REGISTER_LUA_CFUNC(GetGameName);
-	REGISTER_LUA_CFUNC(GetDemoName);
+	REGISTER_LUA_CFUNC(GetReplayFilePath);
+	REGISTER_LUA_CFUNC(GetReplayRecordingFilePath);
 	REGISTER_LUA_CFUNC(GetMenuName);
 
 	REGISTER_LUA_CFUNC(GetProfilerTimeRecord);
@@ -519,11 +520,29 @@ int LuaUnsyncedRead::GetGameName(lua_State* L)
 
 /***
  *
- * @function Spring.GetDemoName
+ * @function Spring.GetReplayFilePath
  *
  * @return string name
  */
-int LuaUnsyncedRead::GetDemoName(lua_State* L)
+int LuaUnsyncedRead::GetReplayFilePath(lua_State* L)
+{
+	if (gameServer != nullptr) {
+		if (gameServer->GetDemoReader()) {
+			lua_pushstring(L, gameServer->GetDemoReader()->GetName().c_str());
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+/***
+ *
+ * @function Spring.GetReplayRecordingFilePath
+ *
+ * @return string name
+ */
+int LuaUnsyncedRead::GetReplayRecordingFilePath(lua_State* L)
 {
 	if (clientNet != nullptr) {
 		const CDemoRecorder* dr = clientNet->GetDemoRecorder();
@@ -535,10 +554,6 @@ int LuaUnsyncedRead::GetDemoName(lua_State* L)
 	}
 
 	if (gameServer != nullptr) {
-		if (gameServer->GetDemoReader()) {
-			lua_pushstring(L, gameServer->GetDemoReader()->GetName().c_str());
-			return 1;
-		}
 		if (gameServer->GetDemoRecorder()) {
 			lua_pushstring(L, gameServer->GetDemoRecorder()->GetName().c_str());
 			return 1;
