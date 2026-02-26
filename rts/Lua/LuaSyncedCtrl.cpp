@@ -815,7 +815,6 @@ static int SetSolidObjectPhysicalState(lua_State* L, CSolidObject* o)
 	drag.y = std::clamp(luaL_optnumber(L, 12, drag.y), 0.0f, 1.0f);
 	drag.z = std::clamp(luaL_optnumber(L, 13, drag.z), 0.0f, 1.0f);
 
-	o->Move(pos, false);
 	o->SetDirVectorsEuler(rot);
 	// do not need ForcedSpin, above three calls cover it
 	o->ForcedMove(pos);
@@ -7293,6 +7292,7 @@ int LuaSyncedCtrl::ForceUnitCollisionUpdate(lua_State* L)
  * @param transporterID integer
  * @param passengerID integer
  * @param pieceNum number
+ * @param force boolean
  * @return nil
  */
 int LuaSyncedCtrl::UnitAttach(lua_State* L)
@@ -7321,7 +7321,9 @@ int LuaSyncedCtrl::UnitAttach(lua_State* L)
 	if (piece >= 0)
 		piece = pieces[piece].scriptPieceIndex;
 
-	transporter->AttachUnit(transportee, piece, !transporter->unitDef->IsTransportUnit());
+	const bool force = luaL_optboolean(L, 4, !transporter->unitDef->IsTransportUnit());
+
+	transporter->AttachUnit(transportee, piece, force);
 	return 0;
 }
 
