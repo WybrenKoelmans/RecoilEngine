@@ -518,7 +518,7 @@ int LuaUnsyncedRead::GetGameName(lua_State* L)
 	return 1;
 }
 
-/***
+/*** If a replay is currently being watched, returns its file path.
  *
  * @function Spring.GetReplayFilePath
  *
@@ -536,7 +536,10 @@ int LuaUnsyncedRead::GetReplayFilePath(lua_State* L)
 	return 0;
 }
 
-/***
+/*** If a replay is being recorded, returns its projected file path.
+ * Note that replay contents are only written there at game exit.
+ * Note also that watching a replay also records a meta-replay
+ * if the DemoFromDemo springsetting is set.
  *
  * @function Spring.GetReplayRecordingFilePath
  *
@@ -548,14 +551,14 @@ int LuaUnsyncedRead::GetReplayRecordingFilePath(lua_State* L)
 		const CDemoRecorder* dr = clientNet->GetDemoRecorder();
 
 		if (dr != nullptr) {
-			lua_pushstring(L, dr->GetName().c_str());
+			lua_pushsstring(L, dr->GetName());
 			return 1;
 		}
 	}
 
 	if (gameServer != nullptr) {
 		if (gameServer->GetDemoRecorder()) {
-			lua_pushstring(L, gameServer->GetDemoRecorder()->GetName().c_str());
+			lua_pushsstring(L, gameServer->GetDemoRecorder()->GetName());
 			return 1;
 		}
 	}
