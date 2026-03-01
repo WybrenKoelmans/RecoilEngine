@@ -522,13 +522,13 @@ int LuaUnsyncedRead::GetGameName(lua_State* L)
  *
  * @function Spring.GetReplayFilePath
  *
- * @return string name
+ * @return string fileName
  */
 int LuaUnsyncedRead::GetReplayFilePath(lua_State* L)
 {
 	if (gameServer != nullptr) {
 		if (gameServer->GetDemoReader()) {
-			lua_pushstring(L, gameServer->GetDemoReader()->GetName().c_str());
+			lua_pushsstring(L, gameServer->GetDemoReader()->GetName());
 			return 1;
 		}
 	}
@@ -543,7 +543,7 @@ int LuaUnsyncedRead::GetReplayFilePath(lua_State* L)
  *
  * @function Spring.GetReplayRecordingFilePath
  *
- * @return string name
+ * @return string fileName
  */
 int LuaUnsyncedRead::GetReplayRecordingFilePath(lua_State* L)
 {
