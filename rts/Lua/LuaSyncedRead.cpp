@@ -3111,6 +3111,7 @@ int LuaSyncedRead::GetUnitsInCylinder(lua_State* L)
  * @param y number
  * @param z number
  * @param radius number
+ * @param allegiance number?
  * @return number[] unitIDs
  */
 int LuaSyncedRead::GetUnitsInSphere(lua_State* L)

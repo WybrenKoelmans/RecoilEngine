@@ -1,0 +1,5 @@
+# Built Skirmish AI artifacts (go build -buildmode=c-shared).
+/data/SkirmishAI.so
+/data/SkirmishAI.h
+/data/SkirmishAI.dll
+/data/SkirmishAI.dylib

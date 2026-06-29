@@ -45,10 +45,15 @@ foreach    (skirmishAIDir ${SKIRMISH_AI_DIRS})
 		# Vendored Skirmish AI submodules (e.g. BARb, CircuitAI) don't compile
 		# cleanly under modern compilers; suppress the warnings here rather
 		# than patching the submodule CMakeLists.
-		if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-			target_compile_options(${skirmishAIDir} PRIVATE ${_skirmish_ai_clang_warns})
-		elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-			target_compile_options(${skirmishAIDir} PRIVATE ${_skirmish_ai_gcc_warns})
+		# Skip utility targets (e.g. Go AIs built via `go build`, which carry no
+		# compile options).
+		get_target_property(_aiTargetType ${skirmishAIDir} TYPE)
+		if (NOT _aiTargetType STREQUAL "UTILITY")
+			if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+				target_compile_options(${skirmishAIDir} PRIVATE ${_skirmish_ai_clang_warns})
+			elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+				target_compile_options(${skirmishAIDir} PRIVATE ${_skirmish_ai_gcc_warns})
+			endif()
 		endif()
 	endif()
 endforeach (skirmishAIDir)

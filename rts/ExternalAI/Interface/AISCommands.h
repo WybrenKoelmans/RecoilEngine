@@ -141,7 +141,7 @@ enum CommandTopic {
 	COMMAND_TRACE_RAY_FEATURE                     = 95,
 	COMMAND_CALL_LUA_UI                           = 96,
 };
-const int NUM_CMD_TOPICS = 97;
+static const int NUM_CMD_TOPICS = 97;
 
 
 /**
