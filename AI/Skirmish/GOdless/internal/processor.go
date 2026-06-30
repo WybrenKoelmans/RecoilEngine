@@ -90,6 +90,16 @@ func (p *Processor) handle(ev springai.Event) {
 				energyResourceID: p.world.energyResourceID,
 			})
 		}
+
+		// Reconcile builder state with the engine periodically: a builder marked
+		// Building for an order that never started (e.g. an invalid build site)
+		// emits no follow-up event, so without this it would stay Building forever
+		// and never be re-tasked. Asking the engine for the truth heals that.
+		// if p.world.frame%60 == 0 {
+		// 	if ids := p.world.squads.UnitIDsByType(SquadTypeBaseBuilder); len(ids) > 0 {
+		// 		p.emit(reconcileBuildersCommand{unitIDs: ids})
+		// 	}
+		// }
 	case EconomyStats:
 		p.world.metalIncome = e.MetalIncome
 		p.world.metalUsage = e.MetalUsage
@@ -99,6 +109,14 @@ func (p *Processor) handle(ev springai.Event) {
 		p.world.energyUsage = e.EnergyUsage
 		p.world.energyAmount = e.EnergyCurrent
 		p.world.energyCapacity = e.EnergyCapacity
+	// case BuilderStates:
+	// 	// The engine is the source of truth: any builder it reports idle is reset
+	// 	// in the model, clearing a stale Building state so goals can re-task it.
+	// 	for _, id := range e.IdleUnitIDs {
+	// 		if unit, ok := p.world.units[id]; ok && unit.state != UnitStateIdle {
+	// 			p.world.setUnitState(id, UnitStateIdle)
+	// 		}
+	// 	}
 	case UnitCreated:
 		p.world.addUnit(e.Unit, e.Position, e.UnitDefID, e.Builder)
 		if e.Builder == invalidUnitID {
@@ -174,5 +192,5 @@ func (p *Processor) debugWorld() {
 	// for _, squad := range p.world.squads.squads {
 	// 	p.emit(logCommand{message: fmt.Sprintf("squad %d (%s) has units %v", squad.ID, squad.SquadType, squad.UnitIDs())})
 	// }
-	p.emit(logCommand{message: "1"})
+	p.emit(logCommand{message: newGoalProduceFactory().diagnose(p.world)})
 }

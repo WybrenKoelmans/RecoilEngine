@@ -126,6 +126,7 @@ func enrichInit(ai *godlessAI, e springai.InitEvent) springai.Event {
 			WindGeneration:   ai.cb.UnitDefGetWindResourceGenerator(unitDefID, energyResourceID),
 			EnergyGeneration: ai.cb.UnitDefGetResourceMake(unitDefID, energyResourceID),
 			IsFactory:        len(buildOptions) > 0 && ai.cb.UnitDefGetSpeed(unitDefID) <= 0,
+			MinWaterDepth:    ai.cb.UnitDefGetMinWaterDepth(unitDefID),
 			FootprintX:       ai.cb.UnitDefGetXSize(unitDefID),
 			FootprintZ:       ai.cb.UnitDefGetZSize(unitDefID),
 		}

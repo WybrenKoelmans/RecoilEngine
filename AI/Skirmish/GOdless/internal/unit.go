@@ -31,6 +31,7 @@ type UnitDef struct {
 	WindGeneration   float32
 	EnergyGeneration float32
 	IsFactory        bool
+	MinWaterDepth    float32 // >0 means the unit must be built in water (e.g. a shipyard)
 	FootprintX       int
 	FootprintZ       int
 }

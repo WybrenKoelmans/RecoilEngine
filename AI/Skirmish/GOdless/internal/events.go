@@ -57,3 +57,13 @@ type EconomyStats struct {
 }
 
 func (EconomyStats) Topic() springai.EventTopic { return springai.EventUpdate }
+
+// BuilderStates reports the engine-authoritative idle status of the builders the
+// processor asked about. It is the source of truth that heals the world model
+// when an optimistic Building state was never cleared - e.g. a build order that
+// never started (invalid site) and so emitted no UnitCreated/UnitFinished.
+// type BuilderStates struct {
+// 	IdleUnitIDs []int
+// }
+
+// func (BuilderStates) Topic() springai.EventTopic { return springai.EventUpdate }

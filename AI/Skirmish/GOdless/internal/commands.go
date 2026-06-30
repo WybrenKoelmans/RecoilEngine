@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"math"
 
 	springai "github.com/beyond-all-reason/RecoilEngine/AI/Wrappers/Go/src/springai"
@@ -104,8 +105,10 @@ func (a squadAssistCommand) Execute(cb *springai.Callback) []springai.Event {
 }
 
 // buildSearchRadius is how far (in elmos) squadBuildCommand looks for a valid build
-// site when the intended position is not buildable.
-const buildSearchRadius = 256
+// site when the intended position is not buildable. It is generous so large
+// structures (factories) still find a spot when the exact planned slot is taken
+// or on bad ground.
+const buildSearchRadius = 640
 
 // squadBuildCommand orders builder units to construct unitDefID at a world position.
 // The intended position comes from the off-thread layout planner; this runs on
@@ -124,9 +127,17 @@ func (a squadBuildCommand) Execute(cb *springai.Callback) []springai.Event {
 	// windmill rows and solar spacing) but nudge it to the nearest valid site
 	// when it is unbuildable - sloped, under water, or already occupied.
 	if !cb.MapIsPossibleToBuildAt(a.unitDefID, pos, a.facing) {
-		if site := cb.MapFindClosestBuildSite(a.unitDefID, pos, buildSearchRadius, 0, a.facing); site.X >= 0 {
-			pos = site
+		site := cb.MapFindClosestBuildSite(a.unitDefID, pos, buildSearchRadius, 0, a.facing)
+		// A failed search returns an unusable position (e.g. the map origin), so
+		// confirm the result is actually buildable before using it. Without this
+		// the builder is sent to construct in a corner or handed a doomed order
+		// that never starts - which strands it and means the structure (e.g. a
+		// factory whose planned slot is blocked) is never built.
+		if !cb.MapIsPossibleToBuildAt(a.unitDefID, site, a.facing) {
+			cb.LogLog(fmt.Sprintf("build: no valid site for def %d near (%.0f,%.0f) within %.0f - skipping", a.unitDefID, pos.X, pos.Z, float32(buildSearchRadius)))
+			return nil
 		}
+		pos = site
 	}
 
 	for _, unitID := range a.unitIDs {
@@ -142,6 +153,24 @@ func (a squadBuildCommand) Execute(cb *springai.Callback) []springai.Event {
 	}
 	return nil
 }
+
+// reconcileBuildersCommand asks the engine for the real command state of the
+// given builders and reports which are idle (no current commands). This heals
+// the world model when a builder was optimistically marked Building for an order
+// that never produced a follow-up event to clear it.
+// type reconcileBuildersCommand struct {
+// 	unitIDs []int
+// }
+
+// func (a reconcileBuildersCommand) Execute(cb *springai.Callback) []springai.Event {
+// 	idle := make([]int, 0, len(a.unitIDs))
+// 	for _, unitID := range a.unitIDs {
+// 		if cb.UnitGetCurrentCommands(unitID) == 0 {
+// 			idle = append(idle, unitID)
+// 		}
+// 	}
+// 	return []springai.Event{BuilderStates{IdleUnitIDs: idle}}
+// }
 
 type debugCommand struct {
 	message string

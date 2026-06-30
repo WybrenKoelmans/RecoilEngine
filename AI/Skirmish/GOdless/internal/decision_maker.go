@@ -40,6 +40,7 @@ func NewDecisionMaker() *DecisionMaker {
 			newGoalAssistSquad(),
 			newGoalProduceMetal(),
 			newGoalProduceEnergy(),
+			newGoalProduceFactory(),
 		},
 	}
 }
